@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Wakasagi">
+  <meta name="google" content="notranslate">
+  <meta name="format-detection" content="telephone=no">
+  <title>Wakasagi Companion</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body class="notranslate" translate="no">
+  <main class="app">
+    <header class="hero">
+      <div>
+        <div class="eyebrow">Wakasagi Companion</div>
+        <h1>釣行ポイント</h1>
+        <p>現在地を釣行ポイントとして保存し、同じ場所の過去釣行回数をその場で表示します。</p>
+      </div>
+      <div id="secureBadge" class="badge warn">確認中</div>
+    </header>
+
+    <section class="card">
+      <div class="head">
+        <div>
+          <h2>現在地</h2>
+          <p id="locStatus">現在地を取得していません。</p>
+        </div>
+        <span id="locBadge" class="pill warn">未取得</span>
+      </div>
+
+      <div class="metrics">
+        <div class="metric"><span>緯度</span><strong id="latView">-</strong></div>
+        <div class="metric"><span>経度</span><strong id="lngView">-</strong></div>
+        <div class="metric"><span>精度</span><strong id="accView">-</strong></div>
+        <div class="metric"><span>時刻</span><strong id="timeView">-</strong></div>
+      </div>
+
+      <div class="actions">
+        <button id="btnLocate" class="primary">現在地を取得</button>
+        <button id="btnStdMap" disabled>標準地図で確認</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="head">
+        <div>
+          <h2>この周辺の過去釣行</h2>
+          <p>20m以内を同一ポイント、100m以内を同一エリアとして集計します。</p>
+        </div>
+        <span id="nearBadge" class="pill">照合待ち</span>
+      </div>
+
+      <div class="visit-grid">
+        <div class="visit">
+          <span>同一ポイント</span>
+          <strong id="count20">-</strong>
+          <em>20m以内</em>
+        </div>
+        <div class="visit">
+          <span>同一エリア</span>
+          <strong id="count100">-</strong>
+          <em>100m以内</em>
+        </div>
+      </div>
+
+      <p id="nearSummary" class="summary">現在地取得後に、スマホ内DBの過去釣行ポイントと照合します。</p>
+      <div id="nearList" class="list"></div>
+
+      <details class="details">
+        <summary>釣行情報を入力する</summary>
+        <div class="form">
+          <label>湖名<input id="lakeName" type="text" placeholder="例：野尻湖"></label>
+          <label>ポイント名<input id="pointName" type="text" placeholder="例：弁天島沖"></label>
+          <label>ライン<input id="lineNo" type="text" placeholder="例：0.2"></label>
+          <label>シンカー(g)<input id="sinkerG" type="number" step="0.1" placeholder="例：15"></label>
+          <label>魚探水深(m)<input id="fishfinderM" type="number" step="0.1" placeholder="例：35.2"></label>
+          <label>水温(℃)<input id="waterTempC" type="number" step="0.1" placeholder="例：4.2"></label>
+          <label class="full">メモ<textarea id="memo" placeholder="天気、魚探反応、氷上/屋形船、仕掛けなど"></textarea></label>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button id="btnStart" class="good" disabled>この場所で釣行開始</button>
+        <button id="btnExport" class="dark">DBを書き出し</button>
+      </div>
+    </section>
+
+    <section class="card flat">
+      <h2>現在の釣行</h2>
+      <p id="sessionView">まだ開始していません。</p>
+    </section>
+
+    <section class="card flat">
+      <h2>保存データ</h2>
+      <p id="dbView">読み込み中...</p>
+      <div class="actions">
+        <button id="btnClearDb" class="danger">テストDB消去</button>
+      </div>
+    </section>
+
+    <footer>
+      Google Maps JavaScript APIなどの課金APIは使用しません。<br>
+      標準地図ボタンは座標確認用です。
+    </footer>
+  </main>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
