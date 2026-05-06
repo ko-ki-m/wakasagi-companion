@@ -16,7 +16,7 @@
   <main class="app">
     <header class="hero">
       <div>
-        <div class="eyebrow">Wakasagi Companion</div>
+        <div class="eyebrow">Wakasagi Companion v3</div>
         <h1>釣行ポイント</h1>
         <p>現在地を釣行ポイントとして保存し、同じ場所の過去釣行回数をその場で表示します。</p>
       </div>
@@ -107,9 +107,27 @@
       </div>
     </section>
 
+    <section class="card current">
+      <div class="head">
+        <div>
+          <h2>現在の釣行</h2>
+          <p id="sessionView">まだ開始していません。</p>
+        </div>
+        <span id="sessionBadge" class="pill">停止中</span>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span>開始</span><strong id="sessionStartView">-</strong></div>
+        <div class="metric"><span>経過</span><strong id="sessionElapsedView">-</strong></div>
+      </div>
+      <div class="actions">
+        <button id="btnEndSession" class="danger" disabled>釣行終了</button>
+        <button id="btnShowCurrentMap" disabled>現在ポイントを地図確認</button>
+      </div>
+    </section>
+
     <section class="card flat">
-      <h2>現在の釣行</h2>
-      <p id="sessionView">まだ開始していません。</p>
+      <h2>前回の釣行</h2>
+      <p id="lastSessionView">まだ記録がありません。</p>
     </section>
 
     <section class="card flat">
