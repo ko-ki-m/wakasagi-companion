@@ -11,13 +11,13 @@
   <title>Wakasagi Map</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./style.css?v=6">
 </head>
 <body class="notranslate" translate="no">
   <main class="app">
     <header class="hero">
       <div>
-        <div class="eyebrow">Wakasagi Map v5</div>
+        <div class="eyebrow">Wakasagi Map v6</div>
         <h1>釣行マップ</h1>
         <p>起動したら現在地を中心に表示し、保存済みの釣行ポイントと照合します。</p>
       </div>
@@ -28,7 +28,7 @@
       <div class="head">
         <div>
           <h2>固定起動</h2>
-          <p>保存データは同じ端末・同じブラウザ・同じURLに保存されます。このアイコンから起動する運用を基準にします。</p>
+          <p>保存データは同じ端末・同じブラウザ・同じURLに保存されます。このアイコンから起動する運用を基準にします。</p><p class='muted'>画面上部が v6 ではなく古い表示の場合は、<a href='./reset.html'>キャッシュ更新ページ</a>を1回開いてください。</p>
         </div>
         <span id="storageBadge" class="pill">確認中</span>
       </div>
@@ -150,6 +150,6 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-  <script src="./app.js" defer></script>
+  <script src="./app.js?v=6" defer></script>
 </body>
 </html>

@@ -1,5 +1,7 @@
 'use strict';
 
+const APP_VERSION = 'v6';
+
 const DB_NAME = 'wakasa_companion_v2';
 const DB_VER = 2;
 const STORE_SPOTS = 'fishing_spots';
@@ -242,9 +244,9 @@ function onGeoSuccess(geo){
   updatePositionView({lat,lng,acc,t});
 }
 async function onGeoError(err){
-  $('locStatus').textContent = err && err.message ? err.message : '現在地を取得できませんでした。';
+  $('locStatus').textContent = '現在地エラー: ' + (err && err.message ? err.message : '現在地を取得できませんでした。') + (window.isSecureContext ? '' : ' / HTTPSではありません');
   setBadge('locBadge','未取得','bad');
-  setMapStatus('現在地取得に失敗しました。','bad');
+  setMapStatus('現在地取得に失敗しました。位置情報の許可、HTTPS、Safari/GitHub Pages起動を確認してください。','bad');
   const last=await metaGet('last_pos');
   if(last && validLatLng(Number(last.lat),Number(last.lng))){
     currentPos=last;
@@ -261,6 +263,12 @@ async function onGeoError(err){
   }
 }
 function locate(){
+  if(!window.isSecureContext){
+    $('locStatus').textContent='HTTPSで開いていないため、現在地を取得できません。GitHub Pagesの https:// URLから開いてください。';
+    setBadge('locBadge','HTTPS必要','bad');
+    setMapStatus('HTTPSではありません','bad');
+    return;
+  }
   if(!('geolocation' in navigator)){
     $('locStatus').textContent='このスマホ/ブラウザは現在地取得に対応していません。';
     setBadge('locBadge','非対応','bad');
@@ -440,7 +448,7 @@ async function renderAllSpotList(spotsArg=null){
 }
 async function initPwa(){
   if('serviceWorker' in navigator){
-    try{ await navigator.serviceWorker.register('./service-worker.js'); }catch(e){}
+    try{ await navigator.serviceWorker.register('./service-worker.js?v=6'); }catch(e){}
   }
 }
 async function init(){
