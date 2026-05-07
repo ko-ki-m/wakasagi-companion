@@ -1,40 +1,35 @@
 'use strict';
 
 const DB_NAME = 'wakasa_companion_v2';
-const DB_VER = 1;
+const DB_VER = 2;
 const STORE_SPOTS = 'fishing_spots';
 const STORE_META = 'meta';
 const SAME_POINT_M = 20;
 const SAME_AREA_M = 100;
+const DEFAULT_CENTER = [36.2048, 138.2529];
 
 let db = null;
 let currentPos = null;
-let currentSession = null;
-let currentSpot = null;
-let sessionTimer = null;
+let map = null;
+let mapReady = false;
+let currentMarker = null;
+let accuracyCircle = null;
+let spotLayer = null;
+let selectedSpotId = null;
 
 const $ = (id) => document.getElementById(id);
 
 function nowMs(){ return Date.now(); }
 function fmtTime(ms){
   if(!ms) return '-';
-  const d = new Date(ms);
+  const d = new Date(Number(ms));
+  if(Number.isNaN(d.getTime())) return '-';
   const z = (n) => String(n).padStart(2,'0');
   return `${d.getFullYear()}/${z(d.getMonth()+1)}/${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`;
 }
 function genId(prefix){
   const r = Math.floor(Math.random()*0xfffff).toString(16).padStart(5,'0');
   return `${prefix}${Date.now().toString(36)}${r}`;
-}
-function fmtDuration(ms){
-  if(!ms || ms < 0) return '-';
-  const total = Math.floor(ms / 1000);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if(h > 0) return `${h}時間${m}分`;
-  if(m > 0) return `${m}分${s}秒`;
-  return `${s}秒`;
 }
 function validLatLng(lat,lng){
   return Number.isFinite(lat) && Number.isFinite(lng) && lat>=-90 && lat<=90 && lng>=-180 && lng<=180;
@@ -46,10 +41,17 @@ function haversineMeters(lat1,lng1,lat2,lng2){
   return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 function escapeHtml(s){
-  return String(s).replace(/[&<>"']/g,(m)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  return String(s == null ? '' : s).replace(/[&<>"']/g,(m)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 function setBadge(id,text,cls){
-  const el=$(id); el.textContent=text; el.className='pill '+(cls||'');
+  const el=$(id);
+  if(!el) return;
+  el.textContent=text;
+  el.className='pill '+(cls||'');
+}
+function setMapStatus(text, cls){
+  $('mapStatus').textContent = text;
+  setBadge('mapBadge', cls === 'good' ? '表示中' : cls === 'bad' ? 'エラー' : '準備中', cls || 'warn');
 }
 
 function openDb(){
@@ -59,7 +61,6 @@ function openDb(){
       const d=req.result;
       if(!d.objectStoreNames.contains(STORE_SPOTS)){
         const st=d.createObjectStore(STORE_SPOTS,{keyPath:'spot_id'});
-        st.createIndex('sid','sid',{unique:false});
         st.createIndex('start_ms','start_ms',{unique:false});
       }
       if(!d.objectStoreNames.contains(STORE_META)){
@@ -85,27 +86,26 @@ function metaGet(key){
     r.onerror=()=>resolve(null);
   });
 }
-function getAllSpots(){
+function getAll(storeName){
   return new Promise((resolve)=>{
-    const tx=db.transaction(STORE_SPOTS,'readonly');
-    const r=tx.objectStore(STORE_SPOTS).getAll();
+    const tx=db.transaction(storeName,'readonly');
+    const r=tx.objectStore(storeName).getAll();
     r.onsuccess=()=>resolve(r.result||[]);
     r.onerror=()=>resolve([]);
   });
 }
-function getSpot(spot_id){
-  return new Promise((resolve)=>{
-    if(!spot_id){ resolve(null); return; }
-    const tx=db.transaction(STORE_SPOTS,'readonly');
-    const r=tx.objectStore(STORE_SPOTS).get(spot_id);
-    r.onsuccess=()=>resolve(r.result||null);
-    r.onerror=()=>resolve(null);
-  });
-}
+function getAllSpots(){ return getAll(STORE_SPOTS); }
 function putSpot(spot){
   return new Promise((resolve)=>{
     const tx=db.transaction(STORE_SPOTS,'readwrite');
     tx.objectStore(STORE_SPOTS).put(spot);
+    tx.oncomplete=()=>resolve(true); tx.onerror=()=>resolve(false);
+  });
+}
+function deleteSpot(spotId){
+  return new Promise((resolve)=>{
+    const tx=db.transaction(STORE_SPOTS,'readwrite');
+    tx.objectStore(STORE_SPOTS).delete(spotId);
     tx.oncomplete=()=>resolve(true); tx.onerror=()=>resolve(false);
   });
 }
@@ -124,8 +124,9 @@ function importSpots(spots){
     let count=0;
     for(const s of spots){
       if(!s || !s.spot_id) continue;
-      if(!validLatLng(Number(s.lat), Number(s.lng))) continue;
-      st.put(s);
+      const lat=Number(s.lat), lng=Number(s.lng);
+      if(!validLatLng(lat,lng)) continue;
+      st.put({...s, lat, lng, updated_ms: Number(s.updated_ms||s.start_ms||nowMs())});
       count++;
     }
     tx.oncomplete=()=>resolve(count);
@@ -154,6 +155,67 @@ function updateStorageBadge(){
   else{ b.textContent='ブラウザ起動'; b.className='pill warn'; }
 }
 
+function ensureMap(){
+  if(mapReady) return true;
+  if(!window.L){
+    setMapStatus('地図ライブラリを読み込めません。通信状態を確認してください。','bad');
+    return false;
+  }
+  map = L.map('map', { zoomControl: true }).setView(DEFAULT_CENTER, 5);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  spotLayer = L.layerGroup().addTo(map);
+  mapReady = true;
+  setMapStatus('現在地取得待ち','warn');
+  return true;
+}
+function setCurrentOnMap(pos){
+  if(!ensureMap()) return;
+  const lat=Number(pos.lat), lng=Number(pos.lng), acc=Number(pos.acc||0);
+  if(!validLatLng(lat,lng)) return;
+  if(currentMarker) currentMarker.remove();
+  if(accuracyCircle) accuracyCircle.remove();
+  currentMarker=L.marker([lat,lng]).addTo(map).bindPopup('現在地');
+  if(acc > 0){
+    accuracyCircle=L.circle([lat,lng], {radius: acc}).addTo(map);
+  }
+  map.setView([lat,lng],19);
+  $('btnCenter').disabled=false;
+  setMapStatus('現在地を中心に表示しています。','good');
+}
+function spotTitle(s){ return s.point_name || s.lake_name || '釣行ポイント'; }
+function spotSub(s){
+  return `ライン ${escapeHtml(s.line_no||'-')} / シンカー ${escapeHtml(s.sinker_g||'-')}g / 魚探 ${escapeHtml(s.fishfinder_depth_m||'-')}m / 水温 ${escapeHtml(s.water_temp_c||'-')}℃`;
+}
+function spotPopupHtml(s, distanceText=''){
+  return `<div class="popup-title">${escapeHtml(spotTitle(s))}</div>
+    <div class="popup-meta">${escapeHtml(fmtTime(s.start_ms))}${distanceText ? '<br>'+escapeHtml(distanceText) : ''}</div>
+    <div class="popup-meta">${spotSub(s)}</div>
+    <a class="popup-btn" href="#" data-spot-id="${escapeHtml(s.spot_id)}">詳細表示</a>`;
+}
+async function renderMapSpots(listOverride=null){
+  if(!ensureMap()) return;
+  if(spotLayer) spotLayer.clearLayers();
+  const spots = listOverride || await getAllSpots();
+  for(const s of spots){
+    const lat=Number(s.lat), lng=Number(s.lng);
+    if(!validLatLng(lat,lng)) continue;
+    let distanceText='';
+    if(currentPos){
+      distanceText=`現在地から ${Math.round(haversineMeters(Number(currentPos.lat),Number(currentPos.lng),lat,lng))}m`;
+    }
+    const marker=L.circleMarker([lat,lng],{
+      radius: selectedSpotId===s.spot_id ? 10 : 7,
+      weight: selectedSpotId===s.spot_id ? 3 : 2,
+      fillOpacity: .75
+    }).addTo(spotLayer);
+    marker.bindPopup(spotPopupHtml(s,distanceText));
+    marker.on('click',()=>selectSpot(s.spot_id));
+  }
+}
+
 function updatePositionView(pos){
   const lat=Number(pos.lat), lng=Number(pos.lng), acc=Number(pos.acc||0), t=Number(pos.t||nowMs());
   currentPos={lat,lng,acc,t};
@@ -164,8 +226,9 @@ function updatePositionView(pos){
   $('locStatus').textContent='現在地を確認しました。';
   setBadge('locBadge','取得済み',acc>0&&acc<=20?'good':'warn');
   $('btnStdMap').disabled=false;
-  $('btnStart').disabled=!!currentSession;
+  $('btnSavePoint').disabled=false;
   metaSet('last_pos', currentPos);
+  setCurrentOnMap(currentPos);
   refreshNearby();
 }
 function onGeoSuccess(geo){
@@ -181,6 +244,7 @@ function onGeoSuccess(geo){
 async function onGeoError(err){
   $('locStatus').textContent = err && err.message ? err.message : '現在地を取得できませんでした。';
   setBadge('locBadge','未取得','bad');
+  setMapStatus('現在地取得に失敗しました。','bad');
   const last=await metaGet('last_pos');
   if(last && validLatLng(Number(last.lat),Number(last.lng))){
     currentPos=last;
@@ -191,7 +255,8 @@ async function onGeoError(err){
     $('locStatus').textContent='現在地は取得できません。前回取得位置を表示しています。';
     setBadge('locBadge','前回位置','warn');
     $('btnStdMap').disabled=false;
-    $('btnStart').disabled=!!currentSession;
+    $('btnSavePoint').disabled=false;
+    setCurrentOnMap(currentPos);
     refreshNearby();
   }
 }
@@ -199,15 +264,21 @@ function locate(){
   if(!('geolocation' in navigator)){
     $('locStatus').textContent='このスマホ/ブラウザは現在地取得に対応していません。';
     setBadge('locBadge','非対応','bad');
+    setMapStatus('現在地取得非対応','bad');
     return;
   }
   $('locStatus').textContent='現在地を取得しています...';
   setBadge('locBadge','取得中','warn');
+  setMapStatus('現在地を取得しています...','warn');
   navigator.geolocation.getCurrentPosition(onGeoSuccess,onGeoError,{enableHighAccuracy:true,timeout:15000,maximumAge:10000});
 }
 
 async function refreshNearby(){
-  if(!currentPos) return;
+  if(!currentPos){
+    await updateDbView();
+    await renderMapSpots();
+    return;
+  }
   const spots=await getAllSpots();
   const list=spots.map(s=>{
     const d=haversineMeters(Number(currentPos.lat),Number(currentPos.lng),Number(s.lat),Number(s.lng));
@@ -231,23 +302,21 @@ async function refreshNearby(){
     $('nearSummary').textContent='この周辺では初回の釣行です。ここからこの場所の記憶を作ります。';
   }
 
-  renderNearbyList(within100.slice(0,5));
-  updateDbView();
+  renderNearbyList(within100.slice(0,10));
+  await renderMapSpots(list);
+  await updateDbView();
 }
 function renderNearbyList(items){
   const box=$('nearList');
   box.innerHTML='';
   for(const s of items){
     const div=document.createElement('div');
-    div.className='item';
-    const title=s.point_name||s.lake_name||'過去ポイント';
-    const date=fmtTime(s.start_ms);
+    div.className='item'+(selectedSpotId===s.spot_id?' selected':'');
     const dist=Math.round(s.distance_m);
-    const ended=s.end_ms?` / 終了 ${fmtTime(s.end_ms)}`:' / 記録中';
-    div.innerHTML=`<div class="top"><span>${escapeHtml(title)}</span><span>${dist}m</span></div>
-      <div class="body">${date}${ended}<br>
-      ライン ${escapeHtml(s.line_no||'-')} / シンカー ${escapeHtml(s.sinker_g||'-')}g /
-      魚探 ${escapeHtml(s.fishfinder_depth_m||'-')}m / 水温 ${escapeHtml(s.water_temp_c||'-')}℃</div>`;
+    div.innerHTML=`<div class="top"><span>${escapeHtml(spotTitle(s))}</span><span>${dist}m</span></div>
+      <div class="body">${escapeHtml(fmtTime(s.start_ms))}<br>${spotSub(s)}<br>${escapeHtml(s.memo||'')}</div>
+      <button type="button" data-spot-id="${escapeHtml(s.spot_id)}">詳細表示</button>`;
+    div.querySelector('button').addEventListener('click',()=>selectSpot(s.spot_id));
     box.appendChild(div);
   }
 }
@@ -262,113 +331,78 @@ function readInfo(){
     memo:$('memo').value.trim()
   };
 }
-async function startFishingHere(){
-  if(currentSession){ alert('現在の釣行が開始中です。先に釣行終了してください。'); return; }
+async function saveCurrentPoint(){
   if(!currentPos){ alert('現在地がありません。先に現在地を取得してください。'); return; }
-  const now=nowMs(), sid=genId('S'), spot_id=genId('P'), info=readInfo();
+  const now=nowMs(), info=readInfo();
   const spot={
-    spot_id,sid,start_ms:now,end_ms:0,
-    lat:Number(currentPos.lat),lng:Number(currentPos.lng),
-    accuracy_m:Number(currentPos.acc||0),location_time_ms:Number(currentPos.t||now),
+    spot_id:genId('P'), start_ms:now, updated_ms:now,
+    lat:Number(currentPos.lat), lng:Number(currentPos.lng),
+    accuracy_m:Number(currentPos.acc||0), location_time_ms:Number(currentPos.t||now),
     source:currentPos.acc?'gps':'cached_gps',
-    lake_name:info.lake_name,point_name:info.point_name,line_no:info.line_no,
-    sinker_g:info.sinker_g,fishfinder_depth_m:info.fishfinder_depth_m,
-    water_temp_c:info.water_temp_c,memo:info.memo,
-    hit_count:0,created_ms:now,updated_ms:now
+    lake_name:info.lake_name, point_name:info.point_name, line_no:info.line_no,
+    sinker_g:info.sinker_g, fishfinder_depth_m:info.fishfinder_depth_m,
+    water_temp_c:info.water_temp_c, memo:info.memo
   };
-  if(!await putSpot(spot)){ alert('釣行ポイントの保存に失敗しました。'); return; }
-  currentSession={sid,spot_id,start_ms:now};
-  currentSpot=spot;
-  await metaSet('current_session',currentSession);
-  await renderCurrentSession();
+  if(!await putSpot(spot)){ alert('ポイント保存に失敗しました。'); return; }
+  setBadge('saveBadge','保存済み','good');
+  selectedSpotId=spot.spot_id;
+  await selectSpot(spot.spot_id);
   await refreshNearby();
 }
-async function endCurrentSession(){
-  if(!currentSession || !currentSpot){ alert('開始中の釣行がありません。'); return; }
-  if(!confirm('現在の釣行を終了します。よろしいですか？')) return;
-  const now=nowMs();
-  currentSpot.end_ms=now;
-  currentSpot.updated_ms=now;
-  await putSpot(currentSpot);
-  await metaSet('last_session', {sid:currentSpot.sid, spot_id:currentSpot.spot_id, start_ms:currentSpot.start_ms, end_ms:now});
-  await metaSet('current_session', null);
-  currentSession=null;
-  currentSpot=null;
-  await renderCurrentSession();
-  await renderLastSession();
-  await refreshNearby();
-}
-async function renderCurrentSession(){
-  if(!currentSession){
-    $('sessionView').textContent='まだ開始していません。';
-    $('sessionStartView').textContent='-';
-    $('sessionElapsedView').textContent='-';
-    setBadge('sessionBadge','停止中','');
-    $('btnEndSession').disabled=true;
-    $('btnShowCurrentMap').disabled=true;
-    $('btnStart').disabled=!currentPos;
-    stopSessionTimer();
-    return;
+async function selectSpot(spotId){
+  selectedSpotId=spotId;
+  const spots=await getAllSpots();
+  const s=spots.find(x=>x.spot_id===spotId);
+  if(!s) return;
+  const lat=Number(s.lat), lng=Number(s.lng);
+  let dist='-';
+  if(currentPos && validLatLng(lat,lng)){
+    dist=`${Math.round(haversineMeters(Number(currentPos.lat),Number(currentPos.lng),lat,lng))}m`;
   }
-  currentSpot = await getSpot(currentSession.spot_id);
-  if(!currentSpot || currentSpot.end_ms){
-    currentSession=null;
-    currentSpot=null;
-    await metaSet('current_session', null);
-    await renderCurrentSession();
-    return;
-  }
-  const name=currentSpot.point_name||currentSpot.lake_name||'釣行ポイント';
-  $('sessionView').innerHTML=`${escapeHtml(name)}で釣行中<br><code>sid=${escapeHtml(currentSpot.sid)}</code><br><code>spot=${escapeHtml(currentSpot.spot_id)}</code>`;
-  $('sessionStartView').textContent=fmtTime(currentSpot.start_ms);
-  setBadge('sessionBadge','釣行中','good');
-  $('btnEndSession').disabled=false;
-  $('btnShowCurrentMap').disabled=false;
-  $('btnStart').disabled=true;
-  startSessionTimer();
-}
-function startSessionTimer(){
-  stopSessionTimer();
-  updateSessionElapsed();
-  sessionTimer=setInterval(updateSessionElapsed,1000);
-}
-function stopSessionTimer(){
-  if(sessionTimer){ clearInterval(sessionTimer); sessionTimer=null; }
-}
-function updateSessionElapsed(){
-  if(!currentSpot){ $('sessionElapsedView').textContent='-'; return; }
-  $('sessionElapsedView').textContent=fmtDuration(nowMs()-Number(currentSpot.start_ms||nowMs()));
-}
-async function renderLastSession(){
-  const last=await metaGet('last_session');
-  if(!last || !last.spot_id){
-    $('lastSessionView').textContent='まだ記録がありません。';
-    return;
-  }
-  const spot=await getSpot(last.spot_id);
-  if(!spot){
-    $('lastSessionView').textContent='前回記録を読み込めません。';
-    return;
-  }
-  const name=spot.point_name||spot.lake_name||'釣行ポイント';
-  const dur=spot.end_ms?fmtDuration(spot.end_ms-spot.start_ms):'-';
-  $('lastSessionView').innerHTML=`${escapeHtml(name)}<br>開始 ${fmtTime(spot.start_ms)} / 終了 ${fmtTime(spot.end_ms)} / ${dur}<br>ライン ${escapeHtml(spot.line_no||'-')} / シンカー ${escapeHtml(spot.sinker_g||'-')}g / 魚探 ${escapeHtml(spot.fishfinder_depth_m||'-')}m`;
+  $('selectedView').innerHTML=`${escapeHtml(spotTitle(s))}<br><code>${escapeHtml(s.spot_id)}</code>`;
+  setBadge('selectedBadge','選択中','good');
+  $('selectedDetail').innerHTML=`<div class="kv">
+    <b>日付</b><span>${escapeHtml(fmtTime(s.start_ms))}</span>
+    <b>距離</b><span>${escapeHtml(dist)}</span>
+    <b>座標</b><span>${Number(s.lat).toFixed(7)}, ${Number(s.lng).toFixed(7)}</span>
+    <b>ライン</b><span>${escapeHtml(s.line_no||'-')}</span>
+    <b>シンカー</b><span>${escapeHtml(s.sinker_g||'-')}g</span>
+    <b>魚探水深</b><span>${escapeHtml(s.fishfinder_depth_m||'-')}m</span>
+    <b>水温</b><span>${escapeHtml(s.water_temp_c||'-')}℃</span>
+    <b>メモ</b><span>${escapeHtml(s.memo||'-')}</span>
+  </div>
+  <div class="actions">
+    <button type="button" id="btnSelectedMap">標準地図で確認</button>
+    <button type="button" id="btnDeleteSpot" class="danger">このポイントを削除</button>
+  </div>`;
+  $('btnSelectedMap').addEventListener('click',()=>openStandardMapFor(lat,lng));
+  $('btnDeleteSpot').addEventListener('click',async()=>{
+    if(!confirm('このポイントを削除しますか？')) return;
+    await deleteSpot(s.spot_id);
+    selectedSpotId=null;
+    $('selectedView').textContent='地図上のピン、または過去釣行一覧を選択してください。';
+    setBadge('selectedBadge','未選択','');
+    $('selectedDetail').innerHTML='';
+    await refreshNearby();
+  });
+  if(map && validLatLng(lat,lng)) map.setView([lat,lng],18);
+  await renderMapSpots();
+  await updateDbView();
 }
 function openStandardMapFor(lat,lng){
   window.open(`https://www.google.com/maps/search/?api=1&query=${Number(lat).toFixed(7)},${Number(lng).toFixed(7)}`,'_blank','noopener');
 }
-function openCurrentSpotMap(){
-  if(!currentSpot) return;
-  openStandardMapFor(currentSpot.lat,currentSpot.lng);
-}
 function openStandardMap(){
   if(!currentPos) return;
-  const lat=Number(currentPos.lat).toFixed(7), lng=Number(currentPos.lng).toFixed(7);
-  window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,'_blank','noopener');
+  openStandardMapFor(currentPos.lat,currentPos.lng);
+}
+function centerCurrent(){
+  if(!currentPos) return;
+  setCurrentOnMap(currentPos);
 }
 async function exportDb(){
   const spots=await getAllSpots();
-  downloadBlob(`wakasa_spots_${nowMs()}.json`,'application/json',JSON.stringify({exported_ms:nowMs(),version:3,spots},null,2));
+  downloadBlob(`wakasa_map_points_${nowMs()}.json`,'application/json',JSON.stringify({exported_ms:nowMs(),version:5,spots},null,2));
 }
 async function importDbFromFile(file){
   const text = await file.text();
@@ -376,21 +410,33 @@ async function importDbFromFile(file){
   try{ payload=JSON.parse(text); }catch(e){ alert('JSONを読めません。'); return; }
   const spots = Array.isArray(payload) ? payload : payload.spots;
   if(!Array.isArray(spots)){ alert('spots配列がありません。'); return; }
-  const count = await importSpots(spots);
-  if(count < 0){ alert('読み込みに失敗しました。'); return; }
-  alert(`${count}件を読み込みました。`);
-  await updateDbView();
+  const countS = await importSpots(spots);
+  if(countS < 0){ alert('読み込みに失敗しました。'); return; }
+  alert(`${countS}ポイントを読み込みました。`);
   await refreshNearby();
-}
-async function restoreCurrentSession(){
-  const s=await metaGet('current_session');
-  if(s&&s.sid&&s.spot_id){
-    currentSession=s;
-  }
 }
 async function updateDbView(){
   const spots=await getAllSpots();
   $('dbView').textContent=`保存済み釣行ポイント：${spots.length} 件`;
+  await renderAllSpotList(spots);
+}
+async function renderAllSpotList(spotsArg=null){
+  const spots=(spotsArg || await getAllSpots()).slice().sort((a,b)=>Number(b.start_ms||0)-Number(a.start_ms||0));
+  const box=$('allSpotList');
+  box.innerHTML='';
+  for(const s of spots.slice(0,50)){
+    const div=document.createElement('div');
+    div.className='item'+(selectedSpotId===s.spot_id?' selected':'');
+    let dist='';
+    if(currentPos){
+      dist=` / ${Math.round(haversineMeters(Number(currentPos.lat),Number(currentPos.lng),Number(s.lat),Number(s.lng)))}m`;
+    }
+    div.innerHTML=`<div class="top"><span>${escapeHtml(spotTitle(s))}</span><span>${escapeHtml(fmtTime(s.start_ms))}${escapeHtml(dist)}</span></div>
+      <div class="body">${spotSub(s)}<br>${escapeHtml(s.memo||'')}</div>
+      <button type="button" data-spot-id="${escapeHtml(s.spot_id)}">詳細表示</button>`;
+    div.querySelector('button').addEventListener('click',()=>selectSpot(s.spot_id));
+    box.appendChild(div);
+  }
 }
 async function initPwa(){
   if('serviceWorker' in navigator){
@@ -401,12 +447,12 @@ async function init(){
   updateSecureBadge();
   updateStorageBadge();
   db=await openDb();
+  ensureMap();
 
   $('btnLocate').addEventListener('click',locate);
+  $('btnCenter').addEventListener('click',centerCurrent);
   $('btnStdMap').addEventListener('click',openStandardMap);
-  $('btnStart').addEventListener('click',startFishingHere);
-  $('btnEndSession').addEventListener('click',endCurrentSession);
-  $('btnShowCurrentMap').addEventListener('click',openCurrentSpotMap);
+  $('btnSavePoint').addEventListener('click',saveCurrentPoint);
   $('btnExport').addEventListener('click',exportDb);
   $('btnImport').addEventListener('click',()=>$('importFile').click());
   $('importFile').addEventListener('change',async(e)=>{
@@ -420,11 +466,16 @@ async function init(){
     location.reload();
   });
 
+  document.addEventListener('click',(ev)=>{
+    const link=ev.target.closest('[data-spot-id]');
+    if(!link) return;
+    ev.preventDefault();
+    selectSpot(link.getAttribute('data-spot-id'));
+  });
+
   await initPwa();
-  await restoreCurrentSession();
-  await renderCurrentSession();
-  await renderLastSession();
   await updateDbView();
+  await renderMapSpots();
 
   const last=await metaGet('last_pos');
   if(last && validLatLng(Number(last.lat),Number(last.lng))){
@@ -432,9 +483,11 @@ async function init(){
     $('locStatus').textContent='前回取得位置を表示しています。現在地を更新できます。';
     setBadge('locBadge','前回位置','warn');
   }
+
   locate();
 }
 window.addEventListener('load',()=>init().catch((e)=>{
   $('locStatus').textContent='初期化に失敗しました: '+(e&&e.message?e.message:e);
   setBadge('locBadge','エラー','bad');
+  setMapStatus('初期化失敗','bad');
 }));

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wakasa-companion-v3';
+const CACHE_NAME = 'wakasa-map-v5';
 const ASSETS = ['./','./index.html','./style.css','./app.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -18,7 +18,7 @@ self.addEventListener('fetch', (event) => {
     if(cached) return cached;
     return fetch(req).then((res) => {
       const copy = res.clone();
-      caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+      caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)).catch(()=>{});
       return res;
     }).catch(() => cached || Response.error());
   }));

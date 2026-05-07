@@ -5,20 +5,21 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f172a">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Wakasagi">
+  <meta name="apple-mobile-web-app-title" content="Wakasagi Map">
   <meta name="google" content="notranslate">
   <meta name="format-detection" content="telephone=no">
-  <title>Wakasagi Companion</title>
+  <title>Wakasagi Map</title>
   <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="./style.css">
 </head>
 <body class="notranslate" translate="no">
   <main class="app">
     <header class="hero">
       <div>
-        <div class="eyebrow">Wakasagi Companion v3</div>
-        <h1>釣行ポイント</h1>
-        <p>現在地を釣行ポイントとして保存し、同じ場所の過去釣行回数をその場で表示します。</p>
+        <div class="eyebrow">Wakasagi Map v5</div>
+        <h1>釣行マップ</h1>
+        <p>起動したら現在地を中心に表示し、保存済みの釣行ポイントと照合します。</p>
       </div>
       <div id="secureBadge" class="badge warn">確認中</div>
     </header>
@@ -27,18 +28,26 @@
       <div class="head">
         <div>
           <h2>固定起動</h2>
-          <p>保存データは同じ端末・同じブラウザ・同じURLに保存されます。迷わない運用のため、ホーム画面に追加して、このアイコンから起動してください。</p>
+          <p>保存データは同じ端末・同じブラウザ・同じURLに保存されます。このアイコンから起動する運用を基準にします。</p>
         </div>
         <span id="storageBadge" class="pill">確認中</span>
       </div>
-      <details class="details compact">
-        <summary>ホーム画面に追加する方法</summary>
-        <div class="guide">
-          <div><b>iPhone</b>：Safariで開く → 共有 → ホーム画面に追加</div>
-          <div><b>Android</b>：Chromeで開く → メニュー → ホーム画面に追加</div>
-          <div class="muted">LINE内ブラウザやGitHubアプリ内ブラウザで使うと、別の保存領域になる可能性があります。</div>
+    </section>
+
+    <section class="card map-card">
+      <div class="head map-head">
+        <div>
+          <h2>現在地マップ</h2>
+          <p id="mapStatus">地図を準備しています...</p>
         </div>
-      </details>
+        <span id="mapBadge" class="pill warn">準備中</span>
+      </div>
+      <div id="map"></div>
+      <div class="actions map-actions">
+        <button id="btnLocate" class="primary">現在地を再取得</button>
+        <button id="btnCenter" disabled>現在地へ戻る</button>
+        <button id="btnStdMap" disabled>標準地図で確認</button>
+      </div>
     </section>
 
     <section class="card">
@@ -55,11 +64,6 @@
         <div class="metric"><span>経度</span><strong id="lngView">-</strong></div>
         <div class="metric"><span>精度</span><strong id="accView">-</strong></div>
         <div class="metric"><span>時刻</span><strong id="timeView">-</strong></div>
-      </div>
-
-      <div class="actions">
-        <button id="btnLocate" class="primary">現在地を取得</button>
-        <button id="btnStdMap" disabled>標準地図で確認</button>
       </div>
     </section>
 
@@ -87,52 +91,50 @@
 
       <p id="nearSummary" class="summary">現在地取得後に、スマホ内DBの過去釣行ポイントと照合します。</p>
       <div id="nearList" class="list"></div>
-
-      <details class="details">
-        <summary>釣行情報を入力する</summary>
-        <div class="form">
-          <label>湖名<input id="lakeName" type="text" placeholder="例：野尻湖"></label>
-          <label>ポイント名<input id="pointName" type="text" placeholder="例：弁天島沖"></label>
-          <label>ライン<input id="lineNo" type="text" placeholder="例：0.2"></label>
-          <label>シンカー(g)<input id="sinkerG" type="number" step="0.1" placeholder="例：15"></label>
-          <label>魚探水深(m)<input id="fishfinderM" type="number" step="0.1" placeholder="例：35.2"></label>
-          <label>水温(℃)<input id="waterTempC" type="number" step="0.1" placeholder="例：4.2"></label>
-          <label class="full">メモ<textarea id="memo" placeholder="天気、魚探反応、氷上/屋形船、仕掛けなど"></textarea></label>
-        </div>
-      </details>
-
-      <div class="actions">
-        <button id="btnStart" class="good" disabled>この場所で釣行開始</button>
-        <button id="btnExport" class="dark">DBを書き出し</button>
-      </div>
     </section>
 
     <section class="card current">
       <div class="head">
         <div>
-          <h2>現在の釣行</h2>
-          <p id="sessionView">まだ開始していません。</p>
+          <h2>選択中の過去ポイント</h2>
+          <p id="selectedView">地図上のピン、または過去釣行一覧を選択してください。</p>
         </div>
-        <span id="sessionBadge" class="pill">停止中</span>
+        <span id="selectedBadge" class="pill">未選択</span>
       </div>
-      <div class="metrics">
-        <div class="metric"><span>開始</span><strong id="sessionStartView">-</strong></div>
-        <div class="metric"><span>経過</span><strong id="sessionElapsedView">-</strong></div>
+      <div id="selectedDetail" class="selected-detail"></div>
+    </section>
+
+    <section class="card">
+      <div class="head">
+        <div>
+          <h2>この場所を保存</h2>
+          <p>現在地を釣行ポイントとして保存します。Pico W本体のsidやFISH記録は作りません。</p>
+        </div>
+        <span id="saveBadge" class="pill">待機中</span>
+      </div>
+      <div class="form">
+        <label>湖名<input id="lakeName" type="text" placeholder="例：野尻湖"></label>
+        <label>ポイント名<input id="pointName" type="text" placeholder="例：弁天島沖"></label>
+        <label>ライン<input id="lineNo" type="text" placeholder="例：0.2"></label>
+        <label>シンカー(g)<input id="sinkerG" type="number" step="0.1" placeholder="例：15"></label>
+        <label>魚探水深(m)<input id="fishfinderM" type="number" step="0.1" placeholder="例：35.2"></label>
+        <label>水温(℃)<input id="waterTempC" type="number" step="0.1" placeholder="例：4.2"></label>
+        <label class="full">メモ<textarea id="memo" placeholder="天気、魚探反応、屋形船、仕掛け、誘い/SPのメモなど"></textarea></label>
       </div>
       <div class="actions">
-        <button id="btnEndSession" class="danger" disabled>釣行終了</button>
-        <button id="btnShowCurrentMap" disabled>現在ポイントを地図確認</button>
+        <button id="btnSavePoint" class="good" disabled>現在地をポイント保存</button>
+        <button id="btnExport" class="dark">DBを書き出し</button>
       </div>
     </section>
 
     <section class="card flat">
-      <h2>前回の釣行</h2>
-      <p id="lastSessionView">まだ記録がありません。</p>
+      <h2>全ポイント一覧</h2>
+      <p id="dbView">読み込み中...</p>
+      <div id="allSpotList" class="list"></div>
     </section>
 
     <section class="card flat">
       <h2>データ保護</h2>
-      <p id="dbView">読み込み中...</p>
       <p class="muted">ブラウザを変える場合は、先に「DBを書き出し」で保存し、新しいブラウザ側で読み込んでください。</p>
       <div class="actions">
         <button id="btnImport" class="primary">DBを読み込み</button>
@@ -143,10 +145,11 @@
 
     <footer>
       Google Maps JavaScript APIなどの課金APIは使用しません。<br>
-      標準地図ボタンは座標確認用です。
+      このPWAはGPS・地図・過去ポイント表示専用です。Pico W本体のログやFISH記録は作りません。
     </footer>
   </main>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
   <script src="./app.js" defer></script>
 </body>
 </html>
