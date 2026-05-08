@@ -1,14 +1,20 @@
 {
-  "name": "Wakasagi Map",
-  "short_name": "Wakasagi",
-  "start_url": "./index.html",
-  "scope": "./",
+  "name": "Wakasagi History Map",
+  "short_name": "Wakasagi Map",
+  "start_url": "./index.html?v=10",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#0f172a",
-  "lang": "ja",
+  "background_color": "#07111f",
+  "theme_color": "#07111f",
   "icons": [
-    {"src":"./icon-192.png","sizes":"192x192","type":"image/png"},
-    {"src":"./icon-512.png","sizes":"512x512","type":"image/png"}
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ]
 }

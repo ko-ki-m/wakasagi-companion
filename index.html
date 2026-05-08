@@ -3,155 +3,149 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0f172a">
+  <meta name="theme-color" content="#07111f">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Wakasagi Map">
   <meta name="google" content="notranslate">
   <meta name="format-detection" content="telephone=no">
-  <title>Wakasagi Map</title>
-  <link rel="manifest" href="./manifest.webmanifest">
+  <title>Wakasagi Map v10</title>
+  <link rel="manifest" href="./manifest.webmanifest?v=10">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="./style.css?v=7">
+  <link rel="stylesheet" href="./style.css?v=10">
 </head>
 <body class="notranslate" translate="no">
-  <main class="app">
-    <header class="hero">
-      <div>
-        <div class="eyebrow">Wakasagi Map v7</div>
-        <h1>釣行マップ</h1>
-        <p>起動したら現在地を中心に表示し、保存済みの釣行ポイントと照合します。</p>
-      </div>
-      <div id="secureBadge" class="badge warn">確認中</div>
-    </header>
+  <header class="topbar">
+    <div>
+      <div class="version">Wakasagi Map v10</div>
+      <h1>過去釣行履歴マップ</h1>
+    </div>
+    <span id="secureBadge" class="badge warn">確認中</span>
+  </header>
 
-    <section class="card notice">
-      <div class="head">
-        <div>
-          <h2>固定起動</h2>
-          <p>保存データは同じ端末・同じブラウザ・同じURLに保存されます。このアイコンから起動する運用を基準にします。</p><p class='muted'>画面上部が v7 ではなく古い表示の場合は、<a href='./reset.html'>キャッシュ更新ページ</a>を1回開いてください。</p>
-        </div>
-        <span id="storageBadge" class="pill">確認中</span>
+  <section class="mapArea">
+    <div id="map"></div>
+    <div class="mapPanel top">
+      <div id="mapStatus">地図を準備しています...</div>
+      <div class="mapButtons">
+        <button id="btnLocate" class="primary">現在地</button>
+        <button id="btnFitAll" disabled>全履歴</button>
+        <button id="btnFitNear" disabled>周辺</button>
+        <button id="btnSaveScroll" class="good" disabled>保存</button>
       </div>
-    </section>
+    </div>
+    <div class="mapPanel bottom">
+      <div class="miniStat"><span>全履歴</span><strong id="totalTrips">-</strong></div>
+      <div class="miniStat"><span>20m内</span><strong id="count20">-</strong></div>
+      <div class="miniStat"><span>100m内</span><strong id="count100">-</strong></div>
+      <div class="miniStat wide"><span>選択</span><strong id="selectedMini">未選択</strong></div>
+    </div>
+  </section>
 
-    <section class="card map-card">
-      <div class="head map-head">
+  <main class="content">
+    <section class="card selectedCard">
+      <div class="cardHead">
         <div>
-          <h2>現在地マップ</h2>
-          <p id="mapStatus">地図を準備しています...</p>
+          <h2>選択した釣行回の詳細</h2>
+          <p id="selectedLead">地図の数字ピン、または下の全履歴から1回分を選ぶと詳細を表示します。</p>
         </div>
-        <span id="mapBadge" class="pill warn">準備中</span>
+        <span id="selectedBadge" class="pill">未選択</span>
       </div>
-      <div id="map"></div>
-      <div class="actions map-actions">
-        <button id="btnLocate" class="primary">現在地を再取得</button>
-        <button id="btnCenter" disabled>現在地へ戻る</button>
-        <button id="btnFitNearby" disabled>周辺全体</button>
-        <button id="btnStdMap" disabled>標準地図で確認</button>
-      </div>
+      <div id="selectedTripDetail" class="emptyBox">未選択</div>
     </section>
 
     <section class="card">
-      <div class="head">
+      <div class="cardHead">
+        <div>
+          <h2>選択ポイントの過去履歴</h2>
+          <p>地図ピンを選ぶと、その場所の20m以内すべての履歴と、100m以内の近辺履歴を表示します。</p>
+        </div>
+        <span id="pointBadge" class="pill">未選択</span>
+      </div>
+      <div id="pointHistoryPanel" class="emptyBox">未選択</div>
+    </section>
+
+    <section class="card">
+      <div class="cardHead">
+        <div>
+          <h2>全過去釣行履歴</h2>
+          <p id="dbView">読み込み中...</p>
+        </div>
+        <span id="groupView" class="pill">-</span>
+      </div>
+      <div class="tools">
+        <input id="searchBox" type="search" placeholder="日付・湖名・ポイント名・メモ・ラインで検索">
+        <select id="sortMode">
+          <option value="date_desc">新しい順</option>
+          <option value="near">現在地から近い順</option>
+          <option value="date_asc">古い順</option>
+          <option value="name">湖名/ポイント名</option>
+        </select>
+      </div>
+      <div id="allHistoryList" class="list"></div>
+    </section>
+
+    <section class="card current">
+      <div class="cardHead">
         <div>
           <h2>現在地</h2>
           <p id="locStatus">現在地を取得していません。</p>
         </div>
         <span id="locBadge" class="pill warn">未取得</span>
       </div>
-
       <div class="metrics">
-        <div class="metric"><span>緯度</span><strong id="latView">-</strong></div>
-        <div class="metric"><span>経度</span><strong id="lngView">-</strong></div>
-        <div class="metric"><span>精度</span><strong id="accView">-</strong></div>
-        <div class="metric"><span>時刻</span><strong id="timeView">-</strong></div>
+        <div><span>緯度</span><strong id="latView">-</strong></div>
+        <div><span>経度</span><strong id="lngView">-</strong></div>
+        <div><span>精度</span><strong id="accView">-</strong></div>
+        <div><span>時刻</span><strong id="timeView">-</strong></div>
       </div>
     </section>
 
     <section class="card">
-      <div class="head">
+      <div class="cardHead">
         <div>
-          <h2>この周辺の過去釣行</h2>
-          <p>20m以内を同一ポイント、100m以内を同一エリアとして集計します。</p>
-        </div>
-        <span id="nearBadge" class="pill">照合待ち</span>
-      </div>
-
-      <div class="visit-grid">
-        <div class="visit">
-          <span>同一ポイント</span>
-          <strong id="count20">-</strong>
-          <em>20m以内</em>
-        </div>
-        <div class="visit">
-          <span>同一エリア</span>
-          <strong id="count100">-</strong>
-          <em>100m以内</em>
-        </div>
-      </div>
-
-      <p id="nearSummary" class="summary">現在地取得後に、スマホ内DBの過去釣行ポイントと照合します。</p>
-      <div id="nearList" class="list"></div>
-    </section>
-
-    <section class="card current">
-      <div class="head">
-        <div>
-          <h2>選択中の過去ポイント</h2>
-          <p id="selectedView">地図上のピン、または過去釣行一覧を選択してください。</p>
-        </div>
-        <span id="selectedBadge" class="pill">未選択</span>
-      </div>
-      <div id="selectedDetail" class="selected-detail"></div>
-    </section>
-
-    <section class="card">
-      <div class="head">
-        <div>
-          <h2>この場所を保存</h2>
-          <p>現在地を新規ポイントとして保存します。選択中の過去ポイントは、座標を変えずに釣行情報だけ上書きできます。Pico W本体のsidやFISH記録は作りません。</p>
+          <h2>現在地を釣行履歴として保存</h2>
+          <p>現在地を1回分の過去釣行として保存します。保存後は全履歴一覧と地図へ即反映されます。</p>
         </div>
         <span id="saveBadge" class="pill">待機中</span>
       </div>
       <div class="form">
+        <label>釣行日時<input id="tripDate" type="datetime-local"></label>
         <label>湖名<input id="lakeName" type="text" placeholder="例：野尻湖"></label>
         <label>ポイント名<input id="pointName" type="text" placeholder="例：弁天島沖"></label>
         <label>ライン<input id="lineNo" type="text" placeholder="例：0.2"></label>
         <label>シンカー(g)<input id="sinkerG" type="number" step="0.1" placeholder="例：15"></label>
-        <label>魚探水深(m)<input id="fishfinderM" type="number" step="0.1" placeholder="例：35.2"></label>
+        <label>魚探水深(m)<input id="fishfinderDepthM" type="number" step="0.1" placeholder="例：35.2"></label>
         <label>水温(℃)<input id="waterTempC" type="number" step="0.1" placeholder="例：4.2"></label>
-        <label class="full">メモ<textarea id="memo" placeholder="天気、魚探反応、屋形船、仕掛け、誘い/SPのメモなど"></textarea></label>
+        <label>天気<input id="weather" type="text" placeholder="例：曇り"></label>
+        <label>風<input id="wind" type="text" placeholder="例：北 3m"></label>
+        <label class="full">メモ<textarea id="memo" placeholder="釣れた深度、魚探反応、仕掛け、誘い/SP、群れ、釣果など"></textarea></label>
       </div>
       <div class="actions">
-        <button id="btnSavePoint" class="good" disabled>現在地を新規保存</button>
-        <button id="btnUpdateSelected" disabled>選択ポイントを上書き</button>
-        <button id="btnExport" class="dark">DBを書き出し</button>
+        <button id="btnSaveTrip" class="good" disabled>現在地を過去履歴として保存</button>
+        <button id="btnLoadSelected" disabled>選択履歴を入力欄へ</button>
+        <button id="btnUpdateTrip" disabled>選択履歴を上書き</button>
+        <button id="btnClearForm">入力欄クリア</button>
       </div>
     </section>
 
-    <section class="card flat">
-      <h2>全ポイント一覧</h2>
-      <p id="dbView">読み込み中...</p>
-      <div id="allSpotList" class="list"></div>
-    </section>
-
-    <section class="card flat">
+    <section class="card maintenance">
       <h2>データ保護</h2>
-      <p class="muted">ブラウザを変える場合は、先に「DBを書き出し」で保存し、新しいブラウザ側で読み込んでください。</p>
+      <p>通常使用では触る必要はありません。端末変更・バックアップ用です。</p>
       <div class="actions">
-        <button id="btnImport" class="primary">DBを読み込み</button>
+        <button id="btnExport" class="dark">バックアップを書き出し</button>
+        <button id="btnImport">バックアップを読み込み</button>
+        <button id="btnMigrate">旧V5/V7データを再移行</button>
         <button id="btnClearDb" class="danger">テストDB消去</button>
       </div>
       <input id="importFile" type="file" accept="application/json,.json" hidden>
     </section>
 
     <footer>
-      Google Maps JavaScript APIなどの課金APIは使用しません。<br>
-      このPWAはGPS・地図・過去ポイント表示専用です。Pico W本体のログやFISH記録は作りません。v7: 20m/100m円、重複保存確認、過去ポイント編集に対応。
+      v10: 全過去履歴を常時表示し、地図ピンまたは履歴1件の選択で、選択した釣行回の詳細を必ず表示します。Pico W本体ログ・sid・FISHは作りません。
     </footer>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-  <script src="./app.js?v=7" defer></script>
+  <script src="./app.js?v=10" defer></script>
 </body>
 </html>
