@@ -704,19 +704,36 @@ function currentLinkTripBase() {
 }
 function buildMaplinkPayload() {
   const f = readForm();
-  let source = null;
-  if (selectedTripId) source = { trip_id: selectedTripId };
   const p = {
     schema: 'wakasagi-maplink-v119',
     app_version: VERSION,
     client_ms: nowMs(),
     return_url: currentAppUrl(),
-    source,
-    ...f
+
+    // Pico W側 decodeMapLinkPayload() / handleMapLinkHash() が読む名前に合わせる。
+    // source は文字列に固定し、選択履歴IDは source_trip_id と map_spot_id に分ける。
+    source: 'wakasagi_map_v119',
+    source_trip_id: selectedTripId || '',
+    map_spot_id: selectedTripId || ('CURRENT_' + nowMs()),
+
+    lake_name: f.lake_name || '',
+    point_name: f.point_name || '',
+    place_name: f.point_name || f.lake_name || '',
+    line_no: f.line_no || '',
+    sinker_g: f.sinker_g || '',
+    fishfinder_m: f.fishfinder_depth_m || '',
+    fishfinder_depth_m: f.fishfinder_depth_m || '',
+    water_temp_c: f.water_temp_c || '',
+    weather: f.weather || '',
+    wind: f.wind || '',
+    note: f.memo || '',
+    memo: f.memo || '',
+    date_ms: Number(f.date_ms || nowMs())
   };
   if (currentPos) {
     p.lat = Number(currentPos.lat);
     p.lng = Number(currentPos.lng);
+    p.acc = Number(currentPos.acc || 0);
     p.accuracy_m = Number(currentPos.acc || 0);
     p.location_time_ms = Number(currentPos.t || nowMs());
   }
@@ -738,31 +755,41 @@ async function sendMaplinkToPico(manual = true) {
   if (selectedTripId) {
     const t = (await getAllTrips()).find((x) => x.trip_id === selectedTripId);
     if (t) {
-      payload = { ...payload, ...readTripFieldsForLink(t), source: { trip_id: t.trip_id } };
+      payload = { ...payload, ...readTripFieldsForLink(t) };
     }
   }
   await metaSet('pending_maplink', payload);
   await metaSet('pending_maplink_ms', nowMs());
   setPill(manual ? 'linkBadge' : 'autoBadge', manual ? '送信中' : '自動連携中', 'warn');
-  const hash = `maplink=${encodeURIComponent(JSON.stringify(payload))}&return_url=${encodeURIComponent(currentAppUrl())}`;
-  location.href = `${base}/log#${hash}`;
+  // Pico W側は #maplink= の値全体を base64 として atob() する。
+  // return_urlを別hashパラメータで足すと decode error になるため、
+  // return_url は payload 内に入れ、hash値は base64 だけにする。
+  const encoded = encodeURIComponent(utf8ToB64(JSON.stringify(payload)));
+  location.href = `${base}/log#maplink=${encoded}`;
 }
 function readTripFieldsForLink(t) {
   return {
     trip_id: t.trip_id,
+    map_spot_id: t.trip_id || '',
+    source: 'wakasagi_map_v119',
+    source_trip_id: t.trip_id || '',
     lat: lat(t),
     lng: lng(t),
+    acc: Number(t.accuracy_m || 0),
     accuracy_m: Number(t.accuracy_m || 0),
     location_time_ms: Number(t.location_time_ms || t.date_ms || nowMs()),
     date_ms: tms(t),
     lake_name: t.lake_name || '',
     point_name: t.point_name || '',
+    place_name: t.point_name || t.lake_name || '',
     line_no: t.line_no || '',
     sinker_g: t.sinker_g || '',
+    fishfinder_m: t.fishfinder_depth_m || t.fishfinder_m || '',
     fishfinder_depth_m: t.fishfinder_depth_m || t.fishfinder_m || '',
     water_temp_c: t.water_temp_c || '',
     weather: t.weather || '',
     wind: t.wind || '',
+    note: t.memo || '',
     memo: t.memo || ''
   };
 }
@@ -784,6 +811,10 @@ async function maybeAutoLink() {
   $('autoStatus').textContent = '現在地を取得したので、Pico W /logへ地点情報を渡します。';
   await sendMaplinkToPico(false);
 }
+function utf8ToB64(s) {
+  return btoa(unescape(encodeURIComponent(String(s || ''))));
+}
+
 function decodePayload(raw) {
   if (!raw) return null;
   const tries = [];
