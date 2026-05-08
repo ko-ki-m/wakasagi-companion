@@ -1,69 +1,27 @@
 <!doctype html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
-  <meta http-equiv="Pragma" content="no-cache">
-  <meta http-equiv="Expires" content="0">
-  <meta name="theme-color" content="#10233f">
-  <title>Wakasagi Map v11.9 Force Update</title>
-  <style>
-    body{font-family:system-ui,-apple-system,"Yu Gothic",Meiryo,sans-serif;margin:0;background:#eef3fb;color:#0d1b2a;font-size:20px;line-height:1.7;padding:18px;}
-    main{max-width:720px;margin:0 auto;background:white;border:2px solid #c8d4e6;border-radius:20px;padding:20px;box-shadow:0 8px 22px rgba(13,27,42,.16);}
-    h1{font-size:30px;line-height:1.25;margin:0 0 12px;}
-    p{margin:10px 0;}
-    button,a.button{display:block;width:100%;min-height:64px;border-radius:16px;border:2px solid #0c356e;background:#174c99;color:white;text-decoration:none;text-align:center;font-weight:900;font-size:21px;padding:16px;margin-top:16px;box-sizing:border-box;}
-    .log{background:#f6f9fd;border:2px dashed #a9b8d0;border-radius:14px;padding:12px;margin-top:14px;font-size:18px;white-space:pre-wrap;}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Wakasagi Map v11.9 強制更新</h1>
-    <p>古いService WorkerとCacheを削除してから、固有名の <b>map-v119.html</b> を自動で開きます。</p>
-    <p>Pico Wから渡された <b>pico</b> / <b>autolink</b> も保持します。</p>
-    <a id="openLink" class="button" href="map-v119.html?v=119">v11.9を開く</a>
-    <div id="log" class="log">準備中...</div>
-  </main>
-  <script>
-    const log = document.getElementById('log');
-    const openLink = document.getElementById('openLink');
-    function targetUrl(){
-      const target = new URL('./map-v119.html', location.href);
-      const src = new URLSearchParams(location.search || '');
-      for (const [k, v] of src.entries()) target.searchParams.set(k, v);
-      target.searchParams.set('v', '119');
-      target.searchParams.set('force', String(Date.now()));
-      if (location.hash) target.hash = location.hash;
-      return target.toString();
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0"><title>Force Wakasagi Map rollback</title></head>
+<body><h1>壊れたv119を使わず、v11.8.4へ戻す</h1><p>古いService WorkerとCacheを消して、v11.8.4を開きます。</p><button id="openBtn">v11.8.4を開く</button>
+<script>
+async function clearAndOpen(){
+  try{
+    if('serviceWorker' in navigator){
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister()));
     }
-    async function run(){
-      const lines=[];
-      try{
-        if('serviceWorker' in navigator){
-          const regs=await navigator.serviceWorker.getRegistrations();
-          for(const r of regs){ await r.unregister(); }
-          lines.push('Service Worker削除: '+regs.length+'件');
-        }else{
-          lines.push('Service Worker: 非対応');
-        }
-      }catch(e){ lines.push('Service Worker削除エラー: '+e.message); }
-      try{
-        if('caches' in window){
-          const keys=await caches.keys();
-          for(const k of keys){ await caches.delete(k); }
-          lines.push('Cache削除: '+keys.length+'件');
-        }else{
-          lines.push('Cache API: 非対応');
-        }
-      }catch(e){ lines.push('Cache削除エラー: '+e.message); }
-      const url = targetUrl();
-      openLink.href = url;
-      lines.push('map-v119.html?v=119 を開きます。');
-      log.textContent=lines.join('\n');
-      setTimeout(() => location.replace(url), 600);
+  }catch(e){}
+  try{
+    if(window.caches){
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k=>caches.delete(k)));
     }
-    run();
-  </script>
-</body>
-</html>
+  }catch(e){}
+  var src = new URL(location.href);
+  var dst = new URL('./map-v1184.html', location.href);
+  src.searchParams.forEach(function(v,k){ if(k !== 'force') dst.searchParams.set(k,v); });
+  dst.searchParams.set('v','1184');
+  dst.searchParams.set('force',String(Date.now()));
+  location.replace(dst.toString() + (location.hash || ''));
+}
+document.getElementById('openBtn').onclick=clearAndOpen;
+setTimeout(clearAndOpen,300);
+</script></body></html>

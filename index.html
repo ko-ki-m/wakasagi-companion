@@ -1,38 +1,12 @@
 <!doctype html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
-  <meta http-equiv="Pragma" content="no-cache">
-  <meta http-equiv="Expires" content="0">
-  <meta name="theme-color" content="#10233f">
-  <title>Wakasagi Map v11.9</title>
-  <style>
-    body{font-family:system-ui,-apple-system,"Yu Gothic",Meiryo,sans-serif;margin:0;background:#eef3fb;color:#0d1b2a;font-size:20px;line-height:1.7;padding:18px;}
-    main{max-width:720px;margin:0 auto;background:#fff;border:2px solid #c8d4e6;border-radius:20px;padding:20px;box-shadow:0 8px 22px rgba(13,27,42,.16);}
-    h1{font-size:30px;line-height:1.25;margin:0 0 12px;}
-    a{display:block;width:100%;min-height:64px;border-radius:16px;border:2px solid #0c356e;background:#174c99;color:#fff;text-decoration:none;text-align:center;font-weight:900;font-size:21px;padding:16px;margin-top:16px;box-sizing:border-box;}
-    code{font-size:18px;background:#f1f5fb;padding:2px 6px;border-radius:6px;}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Wakasagi Map v11.9へ移動します</h1>
-    <p>Pico Wから渡された <code>pico</code> / <code>autolink</code> も保持して、v11.9へ移動します。</p>
-    <a id="fallback" href="map-v119.html?v=119">v11.9を開く</a>
-  </main>
-  <script>
-    (function(){
-      const target = new URL('./map-v119.html', location.href);
-      const src = new URLSearchParams(location.search || '');
-      for (const [k, v] of src.entries()) target.searchParams.set(k, v);
-      target.searchParams.set('v', '119');
-      target.searchParams.set('force', String(Date.now()));
-      if (location.hash) target.hash = location.hash;
-      document.getElementById('fallback').href = target.toString();
-      location.replace(target.toString());
-    })();
-  </script>
-</body>
-</html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0"><title>Wakasagi Map restore</title></head>
+<body><p>Wakasagi Map v11.8.4へ戻します。</p>
+<script>
+(function(){
+  var q = location.search || '';
+  var hash = location.hash || '';
+  var sep = q ? '&' : '?';
+  location.replace('./map-v1184.html' + q + sep + 'force=' + Date.now() + hash);
+})();
+</script>
+</body></html>
