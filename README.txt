@@ -1,57 +1,14 @@
-Wakasagi Map v11 log-link
+Wakasagi Map v11.8.1 no-SW unique-files
 
 目的:
-- 地図アプリ単体で釣行開始・sid作成・FISH記録をしない。
-- 下部の手入力欄を通常画面から隠す。
-- 選択地点または現在地を Pico W /log#maplink=... へ渡す。
-- Pico W /log 側の追加JSが現在sidへ地点情報を保存する。
+- v11.7のまま戻る問題を根本回避するため、app.js/style.css/manifest.webmanifest の同名ファイル運用をやめる。
+- app-v1181.js / style-v1181.css / manifest-v1181.webmanifest を使う。
+- Service Worker登録を停止する。
+- service-worker.js は自分自身をunregisterし、全cacheを削除する。
+- force-v1181.html から必ず index.html?v=1181 を開く。
 
-GitHub Pages更新:
-1. このフォルダの全ファイルで既存ファイルを上書き
-2. reset.html を1回開く
-3. 画面上部が Wakasagi Map v11 になっていることを確認
-
-Pico W側:
-READMEだけでは完了しません。ChatGPTが提示する /log JS 追加差分を入れてください。
-
-
-v11.1:
-- /log や /remote から ?pico=http://PicoW_IP を付けて開かれた場合、自動でPico W IP欄へ保存する。
-- これにより、操作パネル/ログページから地図を開き、そのまま本体ログ連携へ戻れる。
-
-
-v11.2:
-- Pico W /log から #logsync=... で戻ってきたログ要約を受け取る。
-- 既存の地点または20m以内の地点にPico Wログ要約を統合する。
-- 選択した釣行詳細内に FISH / MARK / ログ数 / seq / 時間 / 深度 / 誘い / 速度を表示する。
-
-
-v11.3:
-- /log または /remote から ?pico=...&autolink=1 で開かれた場合、現在地取得後に自動でPico W /log#maplink=... へ移動する。
-- Pico W側がmaplinkを保存後、payload.return_url があれば地図アプリへ自動で戻る。
-- 通常操作で「本体ログへ連携」ボタンを押す必要をなくす。
-
-
-v11.4:
-- 地図アプリ側に「ログページへ」「操作パネルへ」ボタンを追加。
-- ?pico=... で保存済みのPico W IPを使い、URL入力なしで /log /remote に戻れる。
-- 直接起動時は Pico AP の 192.168.4.1 を既定値として使う。
-
-
-v11.5:
-- 「ログへ戻る」「操作パネルへ」ボタンを画面最上部に固定表示。
-- カード内ではなく、地図画面上に常時出るため見失わない。
-- force-v115.html を追加し、古いService Worker/キャッシュを強制削除できる。
-
-
-v11.6:
-- 地図ピンをタップしたその場のポップアップに過去釣行日を表示。
-- 2回以上ある場合は、その場のポップアップ内で日付を選択できる。
-- 日付を選ぶと、その釣行回のライン/シンカー/魚探水深/水温/メモ/Pico Wログ要約を同じポップアップ内に表示。
-- ピンタップで下部へスクロールさせる設計ではなく、地図上その場で確認する設計。
-
-
-v11.7:
-- Pico W /log から地図アプリへ戻る return_url を index.html?v=117&linked=1&force=... に固定。
-- これにより、maplink保存後に古いv11.5へ戻る問題を防止。
-- /log や /remote 側の起動URLも index.html?v=117 に固定すること。
+更新:
+1. GitHub Pages上の既存ファイルを、このフォルダの全ファイルで上書き。
+2. Safariで https://ko-ki-m.github.io/wakasagi-companion/force-v1181.html を直接開く。
+3. 画面上部が Wakasagi Map v11.8.1 になっていることを確認。
+4. app-v1181.js が読まれているため、古いapp.jsに戻りにくい。

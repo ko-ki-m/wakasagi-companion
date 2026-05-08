@@ -1,5 +1,18 @@
-const CACHE_NAME = 'wakasagi-loglink-map-v117';
-const ASSETS = ['./','./index.html?v=117','./style.css?v=117','./app.js?v=117','./manifest.webmanifest?v=117','./reset.html','./force-v117.html','./force-v1121.html','./icon-192.png','./icon-512.png'];
-self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(ASSETS)));self.skipWaiting();});
-self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k)))));self.clients.claim();});
-self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET')return;e.respondWith(caches.match(r).then(c=>c||fetch(r).then(res=>{const cp=res.clone();caches.open(CACHE_NAME).then(cache=>cache.put(r,cp));return res;}).catch(()=>c||Response.error())));});
+// Wakasagi Map v11.8.1
+// Service Worker is intentionally disabled.
+// This file unregisters itself so old cached versions stop controlling the page.
+self.addEventListener('install', (event) => { self.skipWaiting(); });
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+      await self.registration.unregister();
+    } catch (e) {}
+    try {
+      const clientsList = await self.clients.matchAll({type:'window', includeUncontrolled:true});
+      for (const c of clientsList) c.navigate(c.url);
+    } catch (e) {}
+  })());
+});
+self.addEventListener('fetch', () => {});
