@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10233f">
+  <title>Wakasagi Map v11.9 Force Update</title>
+  <style>
+    body{font-family:system-ui,-apple-system,"Yu Gothic",Meiryo,sans-serif;margin:0;background:#eef3fb;color:#0d1b2a;font-size:20px;line-height:1.7;padding:18px;}
+    main{max-width:720px;margin:0 auto;background:white;border:2px solid #c8d4e6;border-radius:20px;padding:20px;box-shadow:0 8px 22px rgba(13,27,42,.16);}
+    h1{font-size:30px;line-height:1.25;margin:0 0 12px;}
+    p{margin:10px 0;}
+    button,a.button{display:block;width:100%;min-height:64px;border-radius:16px;border:2px solid #0c356e;background:#174c99;color:white;text-decoration:none;text-align:center;font-weight:900;font-size:21px;padding:16px;margin-top:16px;box-sizing:border-box;}
+    .log{background:#f6f9fd;border:2px dashed #a9b8d0;border-radius:14px;padding:12px;margin-top:14px;font-size:18px;white-space:pre-wrap;}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Wakasagi Map v11.9 強制更新</h1>
+    <p>古いService Workerとキャッシュを削除します。</p>
+    <p>今回は index.html ではなく、固有名の <b>map-v119.html</b> を開きます。</p>
+    <a id="openLink" class="button" href="map-v119.html?v=119">v11.9を開く</a>
+    <div id="log" class="log">準備中...</div>
+  </main>
+  <script>
+    const log = document.getElementById('log');
+    async function run(){
+      const lines=[];
+      try{
+        if('serviceWorker' in navigator){
+          const regs=await navigator.serviceWorker.getRegistrations();
+          for(const r of regs){ await r.unregister(); }
+          lines.push('Service Worker削除: '+regs.length+'件');
+        }else{
+          lines.push('Service Worker: 非対応');
+        }
+      }catch(e){ lines.push('Service Worker削除エラー: '+e.message); }
+      try{
+        if('caches' in window){
+          const keys=await caches.keys();
+          for(const k of keys){ await caches.delete(k); }
+          lines.push('Cache削除: '+keys.length+'件');
+        }else{
+          lines.push('Cache API: 非対応');
+        }
+      }catch(e){ lines.push('Cache削除エラー: '+e.message); }
+      lines.push('次に map-v119.html?v=119 を開いてください。');
+      log.textContent=lines.join('\n');
+    }
+    run();
+  </script>
+</body>
+</html>
