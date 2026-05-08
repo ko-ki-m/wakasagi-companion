@@ -1,7 +1,7 @@
 {
-  "name": "Wakasagi Map v11.7",
+  "name": "Wakasagi Map v11.8",
   "short_name": "Wakasagi Map",
-  "start_url": "./index.html?v=117",
+  "start_url": "./index.html?v=118",
   "display": "standalone",
   "background_color": "#07111f",
   "theme_color": "#07111f",
