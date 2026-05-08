@@ -217,7 +217,11 @@ function v111_applyPicoParam(){
     const el=document.getElementById('picoIp');
     if(el) el.value=host;
     if(history && history.replaceState){
-      history.replaceState(null,document.title,location.pathname);
+      const clean=new URL(location.href);
+      clean.searchParams.delete('pico');
+      clean.searchParams.delete('autolink');
+      clean.searchParams.set('v','117');
+      history.replaceState(null,document.title,clean.pathname+clean.search);
     }
   }catch(e){}
 }
@@ -443,12 +447,25 @@ function v113_autoBadge(text,cls){
 }
 function v113_currentUrlWithoutAuto(){
   try{
-    const u=new URL(location.href);
-    u.searchParams.delete('autolink');
+    // v11.7: /logから戻るURLを必ずバージョン固定する。
+    // ここが無いと、Pico Wから戻った時に古いService Workerが拾われ、
+    // v11.5など古い画面へ戻ることがある。
+    const base = location.origin + location.pathname.replace(/\/?$/, '');
+    const u = new URL(base || (location.origin + '/index.html'));
+    if(!u.pathname.endsWith('/index.html')){
+      if(u.pathname.endsWith('/')){
+        u.pathname = u.pathname + 'index.html';
+      }else{
+        u.pathname = u.pathname.replace(/\/?$/, '/index.html');
+      }
+    }
+    u.search = '';
+    u.searchParams.set('v','117');
     u.searchParams.set('linked','1');
-    return u.origin + u.pathname + u.search;
+    u.searchParams.set('force',String(Date.now()));
+    return u.toString();
   }catch(e){
-    return location.origin + location.pathname + '?linked=1';
+    return location.origin + location.pathname + '?v=117&linked=1&force=' + Date.now();
   }
 }
 try{

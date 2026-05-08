@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wakasagi Map v11.7 Force Update</title>
+<style>body{font-family:system-ui,-apple-system,sans-serif;background:#07111f;color:#fff;margin:0;padding:22px}.card{max-width:720px;margin:auto;background:#fff;color:#111;border-radius:18px;padding:18px}button{font:inherit;font-weight:950;border:1px solid #ccc;border-radius:12px;background:#0b84ff;color:white;padding:12px}</style>
+</head><body><div class="card"><h1>Wakasagi Map v11.7 強制更新</h1><p id="s">古いキャッシュとService Workerを削除しています...</p><button id="b" style="display:none">v11.7を開く</button></div>
+<script>(async()=>{const s=document.getElementById('s');try{if('serviceWorker'in navigator){const regs=await navigator.serviceWorker.getRegistrations();for(const r of regs){await r.unregister();}}if('caches'in window){const keys=await caches.keys();for(const k of keys){await caches.delete(k);}}s.textContent='更新完了。v11.7へ移動します。';}catch(e){s.textContent='更新処理エラー: '+(e&&e.message?e.message:e);}const url='./index.html?v=117&force='+Date.now();document.getElementById('b').style.display='block';document.getElementById('b').onclick=()=>location.href=url;setTimeout(()=>location.href=url,900);})();</script></body></html>
