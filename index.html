@@ -8,15 +8,15 @@
   <meta name="apple-mobile-web-app-title" content="Wakasagi Map">
   <meta name="google" content="notranslate">
   <meta name="format-detection" content="telephone=no">
-  <title>Wakasagi Map v10.1</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=101">
+  <title>Wakasagi Map v11</title>
+  <link rel="manifest" href="./manifest.webmanifest?v=11">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="./style.css?v=101">
+  <link rel="stylesheet" href="./style.css?v=11">
 </head>
 <body class="notranslate" translate="no">
   <header class="topbar">
     <div>
-      <div class="version">Wakasagi Map v10.1</div>
+      <div class="version">Wakasagi Map v11</div>
       <h1>過去釣行履歴マップ</h1>
     </div>
     <span id="secureBadge" class="badge warn">確認中</span>
@@ -51,6 +51,23 @@
         <span id="selectedBadge" class="pill">未選択</span>
       </div>
       <div id="selectedTripDetail" class="emptyBox">未選択</div>
+    </section>
+
+    <section class="card linkCard">
+      <div class="cardHead">
+        <div>
+          <h2>本体ログへ連携</h2>
+          <p>選択中の過去地点、または現在地をPico Wの現在sidへ渡します。ファイル書き出し/読み込みは使いません。</p>
+        </div>
+        <span id="linkBadge" class="pill">未連携</span>
+      </div>
+      <div class="tools">
+        <label>Pico W IP
+          <input id="picoIp" type="text" placeholder="192.168.4.1">
+        </label>
+        <button id="btnLinkToPico" class="primary" disabled>この地点を本体ログへ連携</button>
+      </div>
+      <p id="linkStatus" class="muted">地図ピンまたは履歴を選択すると、連携ボタンが使えます。未選択でも現在地取得済みなら現在地を連携できます。</p>
     </section>
 
     <section class="card">
@@ -100,7 +117,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card hiddenNormal">
       <div class="cardHead">
         <div>
           <h2>現在地を釣行履歴として保存</h2>
@@ -141,11 +158,11 @@
     </section>
 
     <footer>
-      v10.1: 全過去履歴を常時表示し、地図ピンまたは履歴1件の選択で、選択した釣行回の詳細を必ず表示します。Pico W本体ログ・sid・FISHは作りません。
+      v11: 全過去履歴を常時表示し、地図ピンまたは履歴1件の選択で、選択した釣行回の詳細を必ず表示します。Pico W本体ログ・sid・FISHは作りません。
     </footer>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-  <script src="./app.js?v=101" defer></script>
+  <script src="./app.js?v=11" defer></script>
 </body>
 </html>

@@ -85,3 +85,134 @@ async function initPwa(){if('serviceWorker'in navigator){try{await navigator.ser
 async function init(){if(window.isSecureContext)setBadge('secureBadge','GPS可','good');else setBadge('secureBadge','HTTPS必要','bad');db=await openDb();ensureMap();$('tripDate').value=toLocal(nowMs());const n=await migrateOld(false);if(n>0)$('mapStatus').textContent=`旧データ${n}件を移行しました。`;
 $('btnLocate').onclick=locate;$('btnFitAll').onclick=fitAll;$('btnFitNear').onclick=fitNear;$('btnSaveScroll').onclick=()=>$('tripDate').scrollIntoView({behavior:'smooth',block:'center'});$('btnSaveTrip').onclick=saveTrip;$('btnLoadSelected').onclick=()=>selectedTripId&&loadToForm(selectedTripId);$('btnUpdateTrip').onclick=updateTrip;$('btnClearForm').onclick=clearForm;$('btnExport').onclick=exportDb;$('btnImport').onclick=()=>$('importFile').click();$('importFile').onchange=async e=>{const f=e.target.files&&e.target.files[0];if(!f)return;let p;try{p=JSON.parse(await f.text());}catch(err){alert('JSONを読めません。');return;}const c=await importPayload(p);alert(`${c}件を読み込みました。`);await refreshAll();};$('btnMigrate').onclick=async()=>{const c=await migrateOld(true);alert(`旧データ移行 ${c}件`);await refreshAll();};$('btnClearDb').onclick=async()=>{if(confirm('テストDBを消去しますか？')){await new Promise(res=>{const tx=db.transaction([STORE_TRIPS,STORE_META],'readwrite');tx.objectStore(STORE_TRIPS).clear();tx.objectStore(STORE_META).clear();tx.oncomplete=()=>res();});location.reload();}};$('searchBox').oninput=renderAllList;$('sortMode').onchange=renderAllList;document.addEventListener('click',ev=>{const g=ev.target.closest('[data-group-id]');if(g){ev.preventDefault();selectGroup(g.getAttribute('data-group-id'));return;}const t=ev.target.closest('[data-trip-id]');if(t){ev.preventDefault();selectTrip(t.getAttribute('data-trip-id'));}});await initPwa();await refreshAll();const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng)))updatePosition(last);locate();}
 window.addEventListener('load',()=>init().catch(e=>{$('locStatus').textContent='初期化エラー: '+(e&&e.message?e.message:e);setBadge('locBadge','エラー','bad');}));
+
+
+// ============================================================
+// v11: GitHub map -> Pico W /log#maplink bridge
+// 役割:
+// - GitHub側でsidを作らない
+// - GitHub側で釣行開始しない
+// - GitHub側でFISHを作らない
+// - 選択地点/現在地の情報だけをPico W /logへトップレベル遷移で渡す
+// ============================================================
+function v11_utf8_to_b64(s){
+  return btoa(unescape(encodeURIComponent(s)));
+}
+function v11_b64_to_utf8(s){
+  return decodeURIComponent(escape(atob(s)));
+}
+function v11_getPicoIp(){
+  const el=document.getElementById('picoIp');
+  const v=(el && el.value ? el.value.trim() : '') || localStorage.getItem('pico_ip') || '192.168.4.1';
+  return v.replace(/^https?:\/\//,'').replace(/\/.*$/,'');
+}
+function v11_setLinkBadge(text,cls){
+  const b=document.getElementById('linkBadge');
+  if(!b) return;
+  b.textContent=text;
+  b.className='pill '+(cls||'');
+}
+function v11_setLinkStatus(text){
+  const el=document.getElementById('linkStatus');
+  if(el) el.textContent=text;
+}
+async function v11_getSelectedTripForLink(){
+  try{
+    const trips=await getAllTrips();
+    if(typeof selectedTripId !== 'undefined' && selectedTripId){
+      const t=trips.find(x=>String(x.trip_id)===String(selectedTripId));
+      if(t) return t;
+    }
+    if(typeof selectedGroupId !== 'undefined' && selectedGroupId && typeof groups !== 'undefined'){
+      const g=groups.find(x=>String(x.group_id)===String(selectedGroupId));
+      if(g && g.latest) return g.latest;
+    }
+  }catch(e){}
+  return null;
+}
+async function v11_makeMapLinkPayload(){
+  const t=await v11_getSelectedTripForLink();
+  if(t){
+    return {
+      v:1,
+      source:'wakasagi_map_v11',
+      map_spot_id:String(t.trip_id||''),
+      lat:Number(t.lat),
+      lng:Number(t.lng),
+      acc:Number(t.accuracy_m||0),
+      lake_name:String(t.lake_name||''),
+      point_name:String(t.point_name||''),
+      place_name:String(t.point_name||t.lake_name||''),
+      line_no:String(t.line_no||''),
+      sinker_g:String(t.sinker_g||''),
+      fishfinder_m:String(t.fishfinder_depth_m||t.fishfinder_m||''),
+      water_temp_c:String(t.water_temp_c||''),
+      note:String(t.memo||''),
+      history_date_ms:Number(t.date_ms||t.start_ms||0),
+      linked_ms:Date.now()
+    };
+  }
+  if(typeof currentPos !== 'undefined' && currentPos && Number.isFinite(Number(currentPos.lat)) && Number.isFinite(Number(currentPos.lng))){
+    return {
+      v:1,
+      source:'wakasagi_map_v11',
+      map_spot_id:'CURRENT_'+Date.now(),
+      lat:Number(currentPos.lat),
+      lng:Number(currentPos.lng),
+      acc:Number(currentPos.acc||0),
+      lake_name:'',
+      point_name:'現在地',
+      place_name:'現在地',
+      line_no:'',
+      sinker_g:'',
+      fishfinder_m:'',
+      water_temp_c:'',
+      note:'地図アプリ現在地から連携',
+      linked_ms:Date.now()
+    };
+  }
+  return null;
+}
+async function v11_linkToPicoLog(){
+  const ip=v11_getPicoIp();
+  localStorage.setItem('pico_ip',ip);
+  const payload=await v11_makeMapLinkPayload();
+  if(!payload){
+    v11_setLinkBadge('地点なし','bad');
+    v11_setLinkStatus('現在地または地図上の過去地点を選択してください。');
+    return;
+  }
+  if(!Number.isFinite(payload.lat) || !Number.isFinite(payload.lng)){
+    v11_setLinkBadge('座標不正','bad');
+    v11_setLinkStatus('連携する緯度経度が不正です。');
+    return;
+  }
+  const encoded=encodeURIComponent(v11_utf8_to_b64(JSON.stringify(payload)));
+  v11_setLinkBadge('移動中','warn');
+  v11_setLinkStatus('Pico W /logへ移動して、現在sidへ地点情報を保存します。');
+  location.href='http://'+ip+'/log#maplink='+encoded;
+}
+function v11_enableLinkButton(){
+  const btn=document.getElementById('btnLinkToPico');
+  if(!btn) return;
+  let ok=false;
+  try{
+    ok = !!(typeof selectedTripId !== 'undefined' && selectedTripId);
+    ok = ok || !!(typeof currentPos !== 'undefined' && currentPos && Number.isFinite(Number(currentPos.lat)) && Number.isFinite(Number(currentPos.lng)));
+  }catch(e){}
+  btn.disabled=!ok;
+  if(ok) v11_setLinkStatus('選択地点または現在地をPico Wの現在sidへ連携できます。');
+}
+function v11_initLinkUi(){
+  const ipEl=document.getElementById('picoIp');
+  if(ipEl){
+    ipEl.value=localStorage.getItem('pico_ip')||'192.168.4.1';
+    ipEl.addEventListener('change',()=>localStorage.setItem('pico_ip',v11_getPicoIp()));
+  }
+  const btn=document.getElementById('btnLinkToPico');
+  if(btn) btn.addEventListener('click',v11_linkToPicoLog);
+  // 既存UIの選択/現在地更新後にボタン状態を追従させる
+  setInterval(v11_enableLinkButton,700);
+  v11_enableLinkButton();
+}
+window.addEventListener('load',()=>setTimeout(v11_initLinkUi,900));

@@ -21,7 +21,7 @@ footer{text-align:center;color:#64748b;font-size:11px;line-height:1.55;margin:16
 @media(max-width:619px){#map{height:66vh;min-height:390px}.mapPanel.bottom{grid-template-columns:58px 58px 58px 1fr;gap:5px}.mapButtons,.form,.tools{grid-template-columns:1fr}.miniStat strong{font-size:16px}.cardHead{gap:8px}}
 
 
-/* v10.1 map visibility fix */
+/* v11 map visibility fix */
 .mapArea{
   min-height: calc(100vh - 54px);
 }
@@ -114,3 +114,11 @@ footer{text-align:center;color:#64748b;font-size:11px;line-height:1.55;margin:16
     grid-template-columns:50px 50px 50px 1fr;
   }
 }
+
+
+/* v11 log-link mode */
+.hiddenNormal{display:none!important}
+.linkCard{border-color:#bfdbfe}
+.linkCard .tools{align-items:end}
+.linkCard label{font-size:12px;font-weight:950;color:#475569}
+.linkCard button{margin-top:6px}

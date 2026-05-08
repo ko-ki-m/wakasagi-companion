@@ -1,7 +1,7 @@
 {
-  "name": "Wakasagi History Map",
-  "short_name": "Wakasagi Map",
-  "start_url": "./index.html?v=101",
+  "name": "Wakasagi Log Link Map",
+  "short_name": "Wakasagi Link",
+  "start_url": "./index.html?v=11",
   "display": "standalone",
   "background_color": "#07111f",
   "theme_color": "#07111f",

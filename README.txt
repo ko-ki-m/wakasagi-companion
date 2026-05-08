@@ -1,20 +1,15 @@
-Wakasagi History Map v10.1
+Wakasagi Map v11 log-link
 
 目的:
-- 全過去釣行履歴を常時表示する。
-- 地図のピンは20m以内の履歴をまとめた場所表示。
-- ピンをタップすると、その場所の過去履歴すべてと100m以内の近辺履歴を表示。
-- 履歴1件をタップすると、その釣行回の詳細を必ず表示。
-- 旧 wakasa_companion_v2 / fishing_spots から自動移行を試みる。
-- Pico W本体sid、FISH、本体ログ、スケッチには触れない。
+- 地図アプリ単体で釣行開始・sid作成・FISH記録をしない。
+- 下部の手入力欄を通常画面から隠す。
+- 選択地点または現在地を Pico W /log#maplink=... へ渡す。
+- Pico W /log 側の追加JSが現在sidへ地点情報を保存する。
 
-更新:
-GitHub Pages上の既存ファイルをこのフォルダの中身で上書き。
-その後 reset.html を1回開き、画面上部が Wakasagi Map v10 になっていることを確認。
+GitHub Pages更新:
+1. このフォルダの全ファイルで既存ファイルを上書き
+2. reset.html を1回開く
+3. 画面上部が Wakasagi Map v11 になっていることを確認
 
-
-v10.1修正:
-- スマホ表示で地図上部パネルが縦積みになり、地図を覆う問題を修正。
-- 地図領域を画面高に合わせて拡大。
-- ボタンを横並びの小型表示に変更。
-- LeafletのinvalidateSize()を追加し、タイルの表示崩れを補正。
+Pico W側:
+READMEだけでは完了しません。ChatGPTが提示する /log JS 追加差分を入れてください。
