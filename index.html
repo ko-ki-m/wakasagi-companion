@@ -8,15 +8,22 @@
   <meta name="apple-mobile-web-app-title" content="Wakasagi Map">
   <meta name="google" content="notranslate">
   <meta name="format-detection" content="telephone=no">
-  <title>Wakasagi Map v11.4</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=114">
+  <title>Wakasagi Map v11.5</title>
+  <link rel="manifest" href="./manifest.webmanifest?v=115">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="./style.css?v=114">
+  <link rel="stylesheet" href="./style.css?v=115">
 </head>
 <body class="notranslate" translate="no">
+
+  <div id="picoFixedNav">
+    <button id="fixedPicoLog" type="button">LOGへ戻る</button>
+    <button id="fixedPicoRemote" type="button">操作パネルへ</button>
+    <span id="fixedPicoHost">Pico W: 確認中</span>
+  </div>
+
   <header class="topbar">
     <div>
-      <div class="version">Wakasagi Map v11.4</div>
+      <div class="version">Wakasagi Map v11.5</div>
       <h1>過去釣行履歴マップ</h1>
     </div>
     <span id="secureBadge" class="badge warn">確認中</span>
@@ -185,6 +192,6 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-  <script src="./app.js?v=114" defer></script>
+  <script src="./app.js?v=115" defer></script>
 </body>
 </html>

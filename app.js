@@ -533,3 +533,41 @@ function v114_initPicoNav(){
   v114_updatePicoNav();
 }
 window.addEventListener('load',()=>setTimeout(v114_initPicoNav,1000));
+
+
+// ============================================================
+// v11.5: Fixed buttons back to Pico W
+// Always visible at top of the map screen.
+// ============================================================
+function v115_getPicoHost(){
+  try{
+    let host = localStorage.getItem('pico_ip') || '';
+    const p = new URLSearchParams(location.search);
+    const pico = p.get('pico');
+    if(pico){
+      host = decodeURIComponent(pico).replace(/^https?:\/\//,'').replace(/\/.*$/,'').trim();
+      if(host) localStorage.setItem('pico_ip',host);
+    }
+    if(!host) host = '192.168.4.1';
+    host = String(host).replace(/^https?:\/\//,'').replace(/\/.*$/,'').trim();
+    return host || '192.168.4.1';
+  }catch(e){
+    return '192.168.4.1';
+  }
+}
+function v115_goPico(path){
+  location.href = 'http://' + v115_getPicoHost() + path;
+}
+function v115_initFixedPicoNav(){
+  const hostEl = document.getElementById('fixedPicoHost');
+  const logBtn = document.getElementById('fixedPicoLog');
+  const remoteBtn = document.getElementById('fixedPicoRemote');
+  function refresh(){
+    if(hostEl) hostEl.textContent = 'Pico W: ' + v115_getPicoHost();
+  }
+  if(logBtn) logBtn.addEventListener('click',()=>v115_goPico('/log'));
+  if(remoteBtn) remoteBtn.addEventListener('click',()=>v115_goPico('/remote'));
+  refresh();
+  setInterval(refresh,1000);
+}
+window.addEventListener('load',()=>setTimeout(v115_initFixedPicoNav,500));
