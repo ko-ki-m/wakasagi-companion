@@ -1,18 +1,17 @@
-Wakasagi Map v11.8.2 fixed-js no-SW
+Wakasagi Map v11.8.4 unique-entry
 
-v11.8.1で地図が表示されなかった原因:
-- app-v1181.js の initPwa() 周辺に構文エラーが入り、JavaScriptが停止していた。
-- そのため Leaflet地図初期化まで到達しなかった。
+11.8.2のまま表示される問題への対策:
+- index.html / app.js のキャッシュ問題を避けるため、入口を map-v1184.html に変更。
+- JS/CSS/manifestも app-v1184.js / style-v1184.css / manifest-v1184.webmanifest に変更。
+- Service Workerは停止。
+- force-v1184.html から必ず map-v1184.html?v=1184 を開く。
 
-v11.8.2:
-- app-v1182.js / style-v1182.css / manifest-v1182.webmanifest を使用。
-- Service Worker登録を停止。
-- app-v1182.js は node --check で構文確認済み。
-- ピンタップ時、その場のポップアップに釣行日一覧を表示。
-- 2回以上ある場合はポップアップ内で日付選択。
-- 選択した日付の詳細を同じポップアップ内に表示。
+仕様:
+- ピンをタップした直後は、その場所の過去釣行日だけを表示。
+- 見たい日付をタップすると、その釣行回の詳細を表示。
 
 更新:
 1. GitHub Pages上の既存ファイルを、このフォルダの全ファイルで上書き。
-2. Safariで https://ko-ki-m.github.io/wakasagi-companion/force-v1182.html を直接開く。
-3. 画面上部が Wakasagi Map v11.8.2 になっていることを確認。
+2. Safariで https://ko-ki-m.github.io/wakasagi-companion/force-v1184.html を直接開く。
+3. 画面上部が Wakasagi Map v11.8.4 になっていることを確認。
+4. 今後Pico W側のWAKASAGI_MAP_URLは https://ko-ki-m.github.io/wakasagi-companion/map-v1184.html?v=1184 に固定。

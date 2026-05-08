@@ -1,4 +1,4 @@
-// Wakasagi Map v11.8.2 - service worker disabled
+// Wakasagi Map v11.8.4 - service worker disabled
 self.addEventListener('install', event => { self.skipWaiting(); });
 self.addEventListener('activate', event => {
   event.waitUntil((async()=>{
