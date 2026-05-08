@@ -234,3 +234,193 @@ function v11_initLinkUi(){
   v11_enableLinkButton();
 }
 window.addEventListener('load',()=>setTimeout(v11_initLinkUi,900));
+
+
+// ============================================================
+// v11.2: Pico W /log -> GitHub map log summary receiver
+// 受け取り形式:
+//   https://.../#logsync=<base64url-json>
+// 保存先:
+//   既存 trip_records の選択地点 / map_spot_id / 20m以内の地点へ統合。
+//   見つからない場合は、Pico Wログ要約から新しい履歴を作る。
+// ============================================================
+function v112_utf8_to_b64(s){
+  return btoa(unescape(encodeURIComponent(s)));
+}
+function v112_b64_to_utf8(s){
+  const bin = atob(s);
+  try{
+    return decodeURIComponent(escape(bin));
+  }catch(e){
+    if(window.TextDecoder){
+      const bytes=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+      return new TextDecoder('utf-8').decode(bytes);
+    }
+    return bin;
+  }
+}
+function v112_decodeLogSyncPayload(){
+  try{
+    const h=location.hash||'';
+    if(!h.startsWith('#logsync=')) return null;
+    const raw=decodeURIComponent(h.substring('#logsync='.length));
+    if(!raw) return null;
+    return JSON.parse(v112_b64_to_utf8(raw));
+  }catch(e){
+    return {__error:String(e&&e.message?e.message:e)};
+  }
+}
+function v112_setLogSync(text,cls){
+  const st=document.getElementById('logSyncStatus');
+  const bg=document.getElementById('logSyncBadge');
+  if(st) st.textContent=text;
+  if(bg){ bg.textContent=text.length>12 ? (cls==='good'?'同期済み':'エラー') : text; bg.className='pill '+(cls||''); }
+}
+function v112_logSummaryHtml(t){
+  const s=t && (t.pico_summary || (Array.isArray(t.pico_logs)&&t.pico_logs.length?t.pico_logs[t.pico_logs.length-1]:null));
+  if(!s) return '';
+  const val=(v)=>String(v===undefined||v===null||v===''?'-':v);
+  return `<div class="logBox"><h3>Pico Wログ要約</h3><div class="logGrid">
+    <b>sid</b><span>${esc(val(s.sid))}</span>
+    <b>FISH</b><span>${esc(val(s.fish_count))}</span>
+    <b>MARK</b><span>${esc(val(s.mark_count))}</span>
+    <b>ログ数</b><span>${esc(val(s.tlog_count))}</span>
+    <b>seq</b><span>${esc(val(s.first_seq))} - ${esc(val(s.last_seq))}</span>
+    <b>時間</b><span>${esc(fmtTime(s.start_ms||s.first_recv_ms))} / ${esc(fmtTime(s.updated_ms||s.last_recv_ms))}</span>
+    <b>深度</b><span>${esc(val(s.min_depth_m))} - ${esc(val(s.max_depth_m))} m</span>
+    <b>誘い</b><span>${esc(val(s.used_sasoi))}</span>
+    <b>速度</b><span>${esc(val(s.used_speed))}</span>
+  </div></div>`;
+}
+try{
+  const v112_originalDetailHtml = detailHtml;
+  detailHtml = function(t,base){
+    return v112_originalDetailHtml(t,base) + v112_logSummaryHtml(t);
+  };
+}catch(e){}
+
+async function v112_findTripForLogSync(p){
+  const trips=await getAllTrips();
+  const sid=String(p.sid||'');
+  const spotId=String(p.map_spot_id||p.spot_id||'');
+  if(spotId){
+    let t=trips.find(x=>String(x.trip_id||'')===spotId || String(x.migrated_from||'')===spotId || String(x.map_spot_id||'')===spotId);
+    if(t) return t;
+  }
+  if(sid){
+    let t=trips.find(x=>Array.isArray(x.pico_logs)&&x.pico_logs.some(l=>String(l.sid||'')===sid));
+    if(t) return t;
+  }
+  const lat=Number(p.gps_lat||p.lat);
+  const lng=Number(p.gps_lng||p.lng);
+  if(Number.isFinite(lat)&&Number.isFinite(lng)){
+    let best=null, bestD=Infinity;
+    for(const t of trips){
+      const d=dBase(t,lat,lng);
+      if(d!==null && d<bestD){ best=t; bestD=d; }
+    }
+    if(best && bestD<=20) return best;
+  }
+  return null;
+}
+function v112_makeTripFromLogSync(p){
+  const lat=Number(p.gps_lat||p.lat);
+  const lng=Number(p.gps_lng||p.lng);
+  const now=Date.now();
+  return {
+    trip_id:String(p.map_spot_id||p.spot_id||('PICO_'+(p.sid||now))),
+    map_spot_id:String(p.map_spot_id||p.spot_id||''),
+    date_ms:Number(p.start_ms||p.first_recv_ms||now),
+    lat:Number.isFinite(lat)?lat:0,
+    lng:Number.isFinite(lng)?lng:0,
+    accuracy_m:Number(p.gps_acc_m||p.acc||0),
+    location_time_ms:Number(p.gps_ms||p.start_ms||now),
+    lake_name:String(p.lake_name||''),
+    point_name:String(p.point_name||p.place_name||'Pico Wログ地点'),
+    line_no:String(p.line_no||''),
+    sinker_g:String(p.sinker_g||''),
+    fishfinder_depth_m:String(p.fishfinder_m||p.fishfinder_depth_m||''),
+    water_temp_c:String(p.water_temp_c||''),
+    weather:String(p.weather_text||p.weather||''),
+    wind:String(p.wind_dir||p.wind||''),
+    memo:String(p.note||''),
+    created_ms:now,
+    updated_ms:now
+  };
+}
+async function v112_applyLogSyncPayload(p){
+  if(!p || p.__error){
+    v112_setLogSync('logsync decode error','bad');
+    return false;
+  }
+  const lat=Number(p.gps_lat||p.lat);
+  const lng=Number(p.gps_lng||p.lng);
+  if(!Number.isFinite(lat)||!Number.isFinite(lng)){
+    v112_setLogSync('logsync 座標なし','bad');
+    return false;
+  }
+  let t=await v112_findTripForLogSync(p);
+  if(!t) t=v112_makeTripFromLogSync(p);
+
+  const summary={
+    v:1,
+    source:'pico_log',
+    sid:String(p.sid||''),
+    map_spot_id:String(p.map_spot_id||p.spot_id||''),
+    start_ms:Number(p.start_ms||0),
+    updated_ms:Number(p.updated_ms||Date.now()),
+    first_recv_ms:Number(p.first_recv_ms||0),
+    last_recv_ms:Number(p.last_recv_ms||0),
+    fish_count:Number(p.fish_count||0),
+    mark_count:Number(p.mark_count||0),
+    tlog_count:Number(p.tlog_count||0),
+    first_seq:p.first_seq,
+    last_seq:p.last_seq,
+    first_t_ms:p.first_t_ms,
+    last_t_ms:p.last_t_ms,
+    min_depth_m:p.min_depth_m,
+    max_depth_m:p.max_depth_m,
+    used_sasoi:p.used_sasoi,
+    used_speed:p.used_speed,
+    received_ms:Date.now()
+  };
+
+  t.map_spot_id=t.map_spot_id||summary.map_spot_id;
+  t.pico_logs=Array.isArray(t.pico_logs)?t.pico_logs:[];
+  t.pico_logs=t.pico_logs.filter(x=>String(x.sid||'')!==String(summary.sid||''));
+  t.pico_logs.push(summary);
+  t.pico_summary=summary;
+
+  // Pico側情報で空欄を補完する。既存の手入力情報は上書きしない。
+  if(!t.lake_name && p.lake_name) t.lake_name=String(p.lake_name);
+  if(!t.point_name && (p.point_name||p.place_name)) t.point_name=String(p.point_name||p.place_name);
+  if(!t.line_no && p.line_no) t.line_no=String(p.line_no);
+  if(!t.sinker_g && p.sinker_g) t.sinker_g=String(p.sinker_g);
+  if(!t.fishfinder_depth_m && (p.fishfinder_m||p.fishfinder_depth_m)) t.fishfinder_depth_m=String(p.fishfinder_m||p.fishfinder_depth_m);
+  if(!t.water_temp_c && p.water_temp_c) t.water_temp_c=String(p.water_temp_c);
+  if(!t.memo && p.note) t.memo=String(p.note);
+  t.updated_ms=Date.now();
+
+  await putTrip(t);
+  selectedTripId=t.trip_id;
+
+  if(history && history.replaceState){
+    history.replaceState(null,document.title,location.pathname + location.search);
+  }
+  await refreshAll();
+  await selectTrip(t.trip_id);
+  v112_setLogSync('Pico Wログ要約を保存しました','good');
+  alert('Pico Wログ要約を地図アプリ側の過去釣行詳細へ保存しました。');
+  return true;
+}
+async function v112_initLogSyncReceiver(){
+  // 既存init()がdbを開くのを待つ
+  for(let i=0;i<20;i++){
+    if(db) break;
+    await new Promise(r=>setTimeout(r,250));
+  }
+  const p=v112_decodeLogSyncPayload();
+  if(p) await v112_applyLogSyncPayload(p);
+}
+window.addEventListener('load',()=>setTimeout(v112_initLogSyncReceiver,1400));

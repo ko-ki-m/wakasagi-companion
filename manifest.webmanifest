@@ -1,7 +1,7 @@
 {
-  "name": "Wakasagi Log Link Map v11.1",
-  "short_name": "Wakasagi Link",
-  "start_url": "./index.html?v=111",
+  "name": "Wakasagi Log Sync Map v11.2.1",
+  "short_name": "Wakasagi Sync",
+  "start_url": "./index.html?v=1121",
   "display": "standalone",
   "background_color": "#07111f",
   "theme_color": "#07111f",
