@@ -11,13 +11,13 @@
   <title>Wakasagi Map</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="./style.css?v=6">
+  <link rel="stylesheet" href="./style.css?v=7">
 </head>
 <body class="notranslate" translate="no">
   <main class="app">
     <header class="hero">
       <div>
-        <div class="eyebrow">Wakasagi Map v6</div>
+        <div class="eyebrow">Wakasagi Map v7</div>
         <h1>釣行マップ</h1>
         <p>起動したら現在地を中心に表示し、保存済みの釣行ポイントと照合します。</p>
       </div>
@@ -28,7 +28,7 @@
       <div class="head">
         <div>
           <h2>固定起動</h2>
-          <p>保存データは同じ端末・同じブラウザ・同じURLに保存されます。このアイコンから起動する運用を基準にします。</p><p class='muted'>画面上部が v6 ではなく古い表示の場合は、<a href='./reset.html'>キャッシュ更新ページ</a>を1回開いてください。</p>
+          <p>保存データは同じ端末・同じブラウザ・同じURLに保存されます。このアイコンから起動する運用を基準にします。</p><p class='muted'>画面上部が v7 ではなく古い表示の場合は、<a href='./reset.html'>キャッシュ更新ページ</a>を1回開いてください。</p>
         </div>
         <span id="storageBadge" class="pill">確認中</span>
       </div>
@@ -46,6 +46,7 @@
       <div class="actions map-actions">
         <button id="btnLocate" class="primary">現在地を再取得</button>
         <button id="btnCenter" disabled>現在地へ戻る</button>
+        <button id="btnFitNearby" disabled>周辺全体</button>
         <button id="btnStdMap" disabled>標準地図で確認</button>
       </div>
     </section>
@@ -108,7 +109,7 @@
       <div class="head">
         <div>
           <h2>この場所を保存</h2>
-          <p>現在地を釣行ポイントとして保存します。Pico W本体のsidやFISH記録は作りません。</p>
+          <p>現在地を新規ポイントとして保存します。選択中の過去ポイントは、座標を変えずに釣行情報だけ上書きできます。Pico W本体のsidやFISH記録は作りません。</p>
         </div>
         <span id="saveBadge" class="pill">待機中</span>
       </div>
@@ -122,7 +123,8 @@
         <label class="full">メモ<textarea id="memo" placeholder="天気、魚探反応、屋形船、仕掛け、誘い/SPのメモなど"></textarea></label>
       </div>
       <div class="actions">
-        <button id="btnSavePoint" class="good" disabled>現在地をポイント保存</button>
+        <button id="btnSavePoint" class="good" disabled>現在地を新規保存</button>
+        <button id="btnUpdateSelected" disabled>選択ポイントを上書き</button>
         <button id="btnExport" class="dark">DBを書き出し</button>
       </div>
     </section>
@@ -145,11 +147,11 @@
 
     <footer>
       Google Maps JavaScript APIなどの課金APIは使用しません。<br>
-      このPWAはGPS・地図・過去ポイント表示専用です。Pico W本体のログやFISH記録は作りません。
+      このPWAはGPS・地図・過去ポイント表示専用です。Pico W本体のログやFISH記録は作りません。v7: 20m/100m円、重複保存確認、過去ポイント編集に対応。
     </footer>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-  <script src="./app.js?v=6" defer></script>
+  <script src="./app.js?v=7" defer></script>
 </body>
 </html>

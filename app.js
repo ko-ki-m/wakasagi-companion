@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = 'v6';
+const APP_VERSION = 'v7';
 
 const DB_NAME = 'wakasa_companion_v2';
 const DB_VER = 2;
@@ -18,6 +18,9 @@ let currentMarker = null;
 let accuracyCircle = null;
 let spotLayer = null;
 let selectedSpotId = null;
+let editingSpotId = null;
+let samePointCircle = null;
+let sameAreaCircle = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -54,6 +57,40 @@ function setBadge(id,text,cls){
 function setMapStatus(text, cls){
   $('mapStatus').textContent = text;
   setBadge('mapBadge', cls === 'good' ? '表示中' : cls === 'bad' ? 'エラー' : '準備中', cls || 'warn');
+}
+
+function distanceFromCurrentToSpot(s){
+  if(!currentPos) return null;
+  const lat=Number(s.lat), lng=Number(s.lng);
+  if(!validLatLng(lat,lng)) return null;
+  return haversineMeters(Number(currentPos.lat),Number(currentPos.lng),lat,lng);
+}
+function fillFormFromSpot(s){
+  if(!s) return;
+  $('lakeName').value=s.lake_name||'';
+  $('pointName').value=s.point_name||'';
+  $('lineNo').value=s.line_no||'';
+  $('sinkerG').value=s.sinker_g||'';
+  $('fishfinderM').value=s.fishfinder_depth_m||'';
+  $('waterTempC').value=s.water_temp_c||'';
+  $('memo').value=s.memo||'';
+}
+function readSpotForm(){
+  return {
+    lake_name:$('lakeName').value.trim(),
+    point_name:$('pointName').value.trim(),
+    line_no:$('lineNo').value.trim(),
+    sinker_g:$('sinkerG').value.trim(),
+    fishfinder_depth_m:$('fishfinderM').value.trim(),
+    water_temp_c:$('waterTempC').value.trim(),
+    memo:$('memo').value.trim()
+  };
+}
+function setEditMode(spotId){
+  editingSpotId=spotId||null;
+  const btn=$('btnUpdateSelected');
+  if(btn) btn.disabled=!editingSpotId;
+  setBadge('saveBadge', editingSpotId ? '編集中' : '待機中', editingSpotId ? 'warn' : '');
 }
 
 function openDb(){
@@ -183,8 +220,14 @@ function setCurrentOnMap(pos){
   if(acc > 0){
     accuracyCircle=L.circle([lat,lng], {radius: acc}).addTo(map);
   }
+  if(samePointCircle) samePointCircle.remove();
+  if(sameAreaCircle) sameAreaCircle.remove();
+  samePointCircle=L.circle([lat,lng], {radius: SAME_POINT_M, weight: 2, fillOpacity: 0.03}).addTo(map).bindTooltip('20m 同一ポイント');
+  sameAreaCircle=L.circle([lat,lng], {radius: SAME_AREA_M, weight: 2, fillOpacity: 0.015}).addTo(map).bindTooltip('100m 同一エリア');
   map.setView([lat,lng],19);
   $('btnCenter').disabled=false;
+  const fitBtn=$('btnFitNearby');
+  if(fitBtn) fitBtn.disabled=false;
   setMapStatus('現在地を中心に表示しています。','good');
 }
 function spotTitle(s){ return s.point_name || s.lake_name || '釣行ポイント'; }
@@ -319,7 +362,7 @@ function renderNearbyList(items){
   box.innerHTML='';
   for(const s of items){
     const div=document.createElement('div');
-    div.className='item'+(selectedSpotId===s.spot_id?' selected':'');
+    div.className='item'+(selectedSpotId===s.spot_id?' selected':'')+(s.distance_m<=SAME_POINT_M?' near20':(s.distance_m<=SAME_AREA_M?' near100':''));
     const dist=Math.round(s.distance_m);
     div.innerHTML=`<div class="top"><span>${escapeHtml(spotTitle(s))}</span><span>${dist}m</span></div>
       <div class="body">${escapeHtml(fmtTime(s.start_ms))}<br>${spotSub(s)}<br>${escapeHtml(s.memo||'')}</div>
@@ -341,7 +384,12 @@ function readInfo(){
 }
 async function saveCurrentPoint(){
   if(!currentPos){ alert('現在地がありません。先に現在地を取得してください。'); return; }
-  const now=nowMs(), info=readInfo();
+  const near=(await getAllSpots()).filter(s=>{
+    const d=distanceFromCurrentToSpot(s);
+    return d!==null && d<=SAME_POINT_M;
+  });
+  if(near.length>0 && !confirm('20m以内に既存ポイントが '+near.length+' 件あります。新規ポイントとして追加しますか？\n既存ポイントを編集する場合は、ピンを選択して「編集フォームへ読込」→「選択ポイントを上書き」を使ってください。')) return;
+  const now=nowMs(), info=readSpotForm();
   const spot={
     spot_id:genId('P'), start_ms:now, updated_ms:now,
     lat:Number(currentPos.lat), lng:Number(currentPos.lng),
@@ -352,10 +400,24 @@ async function saveCurrentPoint(){
     water_temp_c:info.water_temp_c, memo:info.memo
   };
   if(!await putSpot(spot)){ alert('ポイント保存に失敗しました。'); return; }
-  setBadge('saveBadge','保存済み','good');
+  setBadge('saveBadge','新規保存済み','good');
   selectedSpotId=spot.spot_id;
-  await selectSpot(spot.spot_id);
+  setEditMode(null);
   await refreshNearby();
+  await selectSpot(spot.spot_id);
+}
+async function updateSelectedPointInfo(){
+  if(!editingSpotId){ alert('上書きするポイントが選択されていません。'); return; }
+  const spots=await getAllSpots();
+  const s=spots.find(x=>x.spot_id===editingSpotId);
+  if(!s){ alert('選択ポイントを読み込めません。'); return; }
+  const info=readSpotForm();
+  const updated={...s,...info,updated_ms:nowMs()};
+  if(!await putSpot(updated)){ alert('ポイント更新に失敗しました。'); return; }
+  setBadge('saveBadge','上書き済み','good');
+  selectedSpotId=updated.spot_id;
+  await refreshNearby();
+  await selectSpot(updated.spot_id);
 }
 async function selectSpot(spotId){
   selectedSpotId=spotId;
@@ -381,13 +443,20 @@ async function selectSpot(spotId){
   </div>
   <div class="actions">
     <button type="button" id="btnSelectedMap">標準地図で確認</button>
+    <button type="button" id="btnEditSpot">編集フォームへ読込</button>
     <button type="button" id="btnDeleteSpot" class="danger">このポイントを削除</button>
   </div>`;
   $('btnSelectedMap').addEventListener('click',()=>openStandardMapFor(lat,lng));
+  $('btnEditSpot').addEventListener('click',()=>{
+    fillFormFromSpot(s);
+    setEditMode(s.spot_id);
+    document.getElementById('lakeName').scrollIntoView({behavior:'smooth',block:'center'});
+  });
   $('btnDeleteSpot').addEventListener('click',async()=>{
     if(!confirm('このポイントを削除しますか？')) return;
     await deleteSpot(s.spot_id);
     selectedSpotId=null;
+    if(editingSpotId===s.spot_id) setEditMode(null);
     $('selectedView').textContent='地図上のピン、または過去釣行一覧を選択してください。';
     setBadge('selectedBadge','未選択','');
     $('selectedDetail').innerHTML='';
@@ -408,9 +477,24 @@ function centerCurrent(){
   if(!currentPos) return;
   setCurrentOnMap(currentPos);
 }
+async function fitNearbyArea(){
+  if(!ensureMap()) return;
+  const pts=[];
+  if(currentPos) pts.push([Number(currentPos.lat), Number(currentPos.lng)]);
+  const spots=await getAllSpots();
+  for(const s of spots){
+    const lat=Number(s.lat), lng=Number(s.lng);
+    if(!validLatLng(lat,lng)) continue;
+    const d=currentPos ? haversineMeters(Number(currentPos.lat),Number(currentPos.lng),lat,lng) : 0;
+    if(!currentPos || d<=SAME_AREA_M) pts.push([lat,lng]);
+  }
+  if(pts.length===0) return;
+  if(pts.length===1){ map.setView(pts[0], 18); return; }
+  map.fitBounds(L.latLngBounds(pts), {padding:[34,34], maxZoom:18});
+}
 async function exportDb(){
   const spots=await getAllSpots();
-  downloadBlob(`wakasa_map_points_${nowMs()}.json`,'application/json',JSON.stringify({exported_ms:nowMs(),version:5,spots},null,2));
+  downloadBlob(`wakasa_map_points_${nowMs()}.json`,'application/json',JSON.stringify({exported_ms:nowMs(),version:7,spots},null,2));
 }
 async function importDbFromFile(file){
   const text = await file.text();
@@ -448,7 +532,7 @@ async function renderAllSpotList(spotsArg=null){
 }
 async function initPwa(){
   if('serviceWorker' in navigator){
-    try{ await navigator.serviceWorker.register('./service-worker.js?v=6'); }catch(e){}
+    try{ await navigator.serviceWorker.register('./service-worker.js?v=7'); }catch(e){}
   }
 }
 async function init(){
@@ -459,8 +543,10 @@ async function init(){
 
   $('btnLocate').addEventListener('click',locate);
   $('btnCenter').addEventListener('click',centerCurrent);
+  $('btnFitNearby').addEventListener('click',fitNearbyArea);
   $('btnStdMap').addEventListener('click',openStandardMap);
   $('btnSavePoint').addEventListener('click',saveCurrentPoint);
+  $('btnUpdateSelected').addEventListener('click',updateSelectedPointInfo);
   $('btnExport').addEventListener('click',exportDb);
   $('btnImport').addEventListener('click',()=>$('importFile').click());
   $('importFile').addEventListener('change',async(e)=>{
@@ -482,6 +568,7 @@ async function init(){
   });
 
   await initPwa();
+  setEditMode(null);
   await updateDbView();
   await renderMapSpots();
 

@@ -1,5 +1,5 @@
-const CACHE_NAME = 'wakasa-map-v6-20260507';
-const ASSETS = ['./','./index.html','./style.css?v=6','./app.js?v=6','./manifest.webmanifest','./icon-192.png','./icon-512.png','./reset.html'];
+const CACHE_NAME = 'wakasa-map-v7-20260507';
+const ASSETS = ['./','./index.html','./style.css?v=7','./app.js?v=7','./manifest.webmanifest','./icon-192.png','./icon-512.png','./reset.html'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)).catch(()=>{}));
