@@ -203,7 +203,25 @@ function v11_enableLinkButton(){
   btn.disabled=!ok;
   if(ok) v11_setLinkStatus('選択地点または現在地をPico Wの現在sidへ連携できます。');
 }
+
+function v111_applyPicoParam(){
+  try{
+    const p=new URLSearchParams(location.search);
+    const pico=p.get('pico');
+    if(!pico) return;
+    let host=decodeURIComponent(pico).replace(/^https?:\/\//,'').replace(/\/.*$/,'');
+    if(!host) return;
+    localStorage.setItem('pico_ip',host);
+    const el=document.getElementById('picoIp');
+    if(el) el.value=host;
+    if(history && history.replaceState){
+      history.replaceState(null,document.title,location.pathname);
+    }
+  }catch(e){}
+}
+
 function v11_initLinkUi(){
+  v111_applyPicoParam();
   const ipEl=document.getElementById('picoIp');
   if(ipEl){
     ipEl.value=localStorage.getItem('pico_ip')||'192.168.4.1';

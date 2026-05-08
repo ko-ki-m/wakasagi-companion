@@ -13,3 +13,8 @@ GitHub Pages更新:
 
 Pico W側:
 READMEだけでは完了しません。ChatGPTが提示する /log JS 追加差分を入れてください。
+
+
+v11.1:
+- /log や /remote から ?pico=http://PicoW_IP を付けて開かれた場合、自動でPico W IP欄へ保存する。
+- これにより、操作パネル/ログページから地図を開き、そのまま本体ログ連携へ戻れる。
