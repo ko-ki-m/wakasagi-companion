@@ -494,3 +494,42 @@ async function v113_runAutoLinkIfRequested(){
   await v11_linkToPicoLog();
 }
 window.addEventListener('load',()=>setTimeout(v113_runAutoLinkIfRequested,2200));
+
+
+// ============================================================
+// v11.4: Buttons from GitHub map back to Pico W /log and /remote.
+// No prompt. Uses ?pico=... saved by v111_applyPicoParam(), or localStorage,
+// and falls back to 192.168.4.1 for Pico AP mode.
+// ============================================================
+function v114_getPicoHost(){
+  try{
+    let host = localStorage.getItem('pico_ip') || '';
+    if(!host) host = '192.168.4.1';
+    host = String(host).replace(/^https?:\/\//,'').replace(/\/.*$/,'').trim();
+    return host || '192.168.4.1';
+  }catch(e){
+    return '192.168.4.1';
+  }
+}
+function v114_picoUrl(path){
+  return 'http://' + v114_getPicoHost() + path;
+}
+function v114_openPico(path){
+  location.href = v114_picoUrl(path);
+}
+function v114_updatePicoNav(){
+  const host = v114_getPicoHost();
+  const st = document.getElementById('picoNavStatus');
+  const bg = document.getElementById('picoNavBadge');
+  if(st) st.textContent = '接続先: http://' + host;
+  if(bg){ bg.textContent = host; bg.className = 'pill good'; }
+}
+function v114_initPicoNav(){
+  const logBtn = document.getElementById('btnOpenPicoLog');
+  const remoteBtn = document.getElementById('btnOpenPicoRemote');
+  if(logBtn) logBtn.addEventListener('click',()=>v114_openPico('/log'));
+  if(remoteBtn) remoteBtn.addEventListener('click',()=>v114_openPico('/remote'));
+  setInterval(v114_updatePicoNav, 1000);
+  v114_updatePicoNav();
+}
+window.addEventListener('load',()=>setTimeout(v114_initPicoNav,1000));

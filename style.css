@@ -132,3 +132,8 @@ footer{text-align:center;color:#64748b;font-size:11px;line-height:1.55;margin:16
 
 /* v11.3 auto link */
 .autoLinkCard{border-color:#fde68a}
+
+/* v11.4 Pico W navigation */
+.picoNavCard{border-color:#bae6fd}
+.picoNavActions{grid-template-columns:1fr 1fr}
+@media(max-width:559px){.picoNavActions{grid-template-columns:1fr 1fr}}

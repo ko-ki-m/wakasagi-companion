@@ -30,3 +30,9 @@ v11.3:
 - /log または /remote から ?pico=...&autolink=1 で開かれた場合、現在地取得後に自動でPico W /log#maplink=... へ移動する。
 - Pico W側がmaplinkを保存後、payload.return_url があれば地図アプリへ自動で戻る。
 - 通常操作で「本体ログへ連携」ボタンを押す必要をなくす。
+
+
+v11.4:
+- 地図アプリ側に「ログページへ」「操作パネルへ」ボタンを追加。
+- ?pico=... で保存済みのPico W IPを使い、URL入力なしで /log /remote に戻れる。
+- 直接起動時は Pico AP の 192.168.4.1 を既定値として使う。
