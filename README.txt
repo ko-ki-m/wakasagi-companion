@@ -1,4 +1,4 @@
-Wakasagi History Map v10
+Wakasagi History Map v10.1
 
 目的:
 - 全過去釣行履歴を常時表示する。
@@ -11,3 +11,10 @@ Wakasagi History Map v10
 更新:
 GitHub Pages上の既存ファイルをこのフォルダの中身で上書き。
 その後 reset.html を1回開き、画面上部が Wakasagi Map v10 になっていることを確認。
+
+
+v10.1修正:
+- スマホ表示で地図上部パネルが縦積みになり、地図を覆う問題を修正。
+- 地図領域を画面高に合わせて拡大。
+- ボタンを横並びの小型表示に変更。
+- LeafletのinvalidateSize()を追加し、タイルの表示崩れを補正。

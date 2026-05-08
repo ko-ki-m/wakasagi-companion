@@ -1,7 +1,7 @@
 {
   "name": "Wakasagi History Map",
   "short_name": "Wakasagi Map",
-  "start_url": "./index.html?v=10",
+  "start_url": "./index.html?v=101",
   "display": "standalone",
   "background_color": "#07111f",
   "theme_color": "#07111f",
