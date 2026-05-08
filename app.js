@@ -207,6 +207,8 @@ function v11_enableLinkButton(){
 function v111_applyPicoParam(){
   try{
     const p=new URLSearchParams(location.search);
+    if(p.get('autolink')==='1') sessionStorage.setItem('wakasagi_autolink_once','1');
+    if(p.get('linked')==='1') sessionStorage.setItem('wakasagi_linked_notice','1');
     const pico=p.get('pico');
     if(!pico) return;
     let host=decodeURIComponent(pico).replace(/^https?:\/\//,'').replace(/\/.*$/,'');
@@ -424,3 +426,71 @@ async function v112_initLogSyncReceiver(){
   if(p) await v112_applyLogSyncPayload(p);
 }
 window.addEventListener('load',()=>setTimeout(v112_initLogSyncReceiver,1400));
+
+
+// ============================================================
+// v11.3: Auto link mode
+// /log or /remote opens GitHub map with ?pico=...&autolink=1.
+// GitHub map gets GPS, builds maplink payload, jumps to Pico /log#maplink=...
+// Pico /log saves it to current sid, then returns to return_url.
+// User does not press "本体ログへ連携" in the normal flow.
+// ============================================================
+function v113_autoBadge(text,cls){
+  const b=document.getElementById('autoLinkBadge');
+  const s=document.getElementById('autoLinkStatus');
+  if(b){ b.textContent=text; b.className='pill '+(cls||''); }
+  if(s) s.textContent=text;
+}
+function v113_currentUrlWithoutAuto(){
+  try{
+    const u=new URL(location.href);
+    u.searchParams.delete('autolink');
+    u.searchParams.set('linked','1');
+    return u.origin + u.pathname + u.search;
+  }catch(e){
+    return location.origin + location.pathname + '?linked=1';
+  }
+}
+try{
+  const v113_originalMakeMapLinkPayload = v11_makeMapLinkPayload;
+  v11_makeMapLinkPayload = async function(){
+    const p = await v113_originalMakeMapLinkPayload();
+    if(p){
+      p.auto_link = 1;
+      p.return_url = v113_currentUrlWithoutAuto();
+    }
+    return p;
+  };
+}catch(e){}
+async function v113_waitForCurrentPos(maxMs){
+  const start=Date.now();
+  while(Date.now()-start < maxMs){
+    try{
+      if(typeof currentPos !== 'undefined' && currentPos && Number.isFinite(Number(currentPos.lat)) && Number.isFinite(Number(currentPos.lng))){
+        return true;
+      }
+    }catch(e){}
+    await new Promise(r=>setTimeout(r,500));
+  }
+  return false;
+}
+async function v113_runAutoLinkIfRequested(){
+  if(sessionStorage.getItem('wakasagi_linked_notice')==='1'){
+    sessionStorage.removeItem('wakasagi_linked_notice');
+    v113_autoBadge('連携済み','good');
+    v11_setLinkBadge && v11_setLinkBadge('連携済み','good');
+    return;
+  }
+  if(sessionStorage.getItem('wakasagi_autolink_once')!=='1') return;
+  sessionStorage.removeItem('wakasagi_autolink_once');
+  v113_autoBadge('現在地取得中','warn');
+  const ok=await v113_waitForCurrentPos(18000);
+  if(!ok){
+    v113_autoBadge('現在地取得失敗','bad');
+    v11_setLinkStatus && v11_setLinkStatus('自動連携できません。現在地取得を確認してください。');
+    return;
+  }
+  v113_autoBadge('本体へ自動連携中','warn');
+  await v11_linkToPicoLog();
+}
+window.addEventListener('load',()=>setTimeout(v113_runAutoLinkIfRequested,2200));

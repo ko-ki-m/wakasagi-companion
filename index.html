@@ -8,15 +8,15 @@
   <meta name="apple-mobile-web-app-title" content="Wakasagi Map">
   <meta name="google" content="notranslate">
   <meta name="format-detection" content="telephone=no">
-  <title>Wakasagi Map v11.2.1</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=1121">
+  <title>Wakasagi Map v11.3</title>
+  <link rel="manifest" href="./manifest.webmanifest?v=113">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="./style.css?v=1121">
+  <link rel="stylesheet" href="./style.css?v=113">
 </head>
 <body class="notranslate" translate="no">
   <header class="topbar">
     <div>
-      <div class="version">Wakasagi Map v11.2.1</div>
+      <div class="version">Wakasagi Map v11.3</div>
       <h1>過去釣行履歴マップ</h1>
     </div>
     <span id="secureBadge" class="badge warn">確認中</span>
@@ -128,6 +128,17 @@
       <p id="logSyncStatus" class="muted">/log側から戻ると自動で保存・表示します。</p>
     </section>
 
+    <section class="card autoLinkCard">
+      <div class="cardHead">
+        <div>
+          <h2>本体ログ自動連携</h2>
+          <p>/log または操作パネルから開いた場合、現在地取得後に現在sidへ自動連携して地図へ戻ります。</p>
+        </div>
+        <span id="autoLinkBadge" class="pill">待機</span>
+      </div>
+      <p id="autoLinkStatus" class="muted">通常起動時は自動連携しません。</p>
+    </section>
+
     <section class="card hiddenNormal">
       <div class="cardHead">
         <div>
@@ -174,6 +185,6 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-  <script src="./app.js?v=1121" defer></script>
+  <script src="./app.js?v=113" defer></script>
 </body>
 </html>

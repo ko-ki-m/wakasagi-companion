@@ -129,3 +129,6 @@ footer{text-align:center;color:#64748b;font-size:11px;line-height:1.55;margin:16
 .logBox h3{margin:0 0 6px;font-size:14px}
 .logGrid{display:grid;grid-template-columns:110px 1fr;gap:5px;font-size:13px;line-height:1.45}
 .logGrid b{color:#166534}
+
+/* v11.3 auto link */
+.autoLinkCard{border-color:#fde68a}

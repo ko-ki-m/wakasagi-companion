@@ -24,3 +24,9 @@ v11.2:
 - Pico W /log から #logsync=... で戻ってきたログ要約を受け取る。
 - 既存の地点または20m以内の地点にPico Wログ要約を統合する。
 - 選択した釣行詳細内に FISH / MARK / ログ数 / seq / 時間 / 深度 / 誘い / 速度を表示する。
+
+
+v11.3:
+- /log または /remote から ?pico=...&autolink=1 で開かれた場合、現在地取得後に自動でPico W /log#maplink=... へ移動する。
+- Pico W側がmaplinkを保存後、payload.return_url があれば地図アプリへ自動で戻る。
+- 通常操作で「本体ログへ連携」ボタンを押す必要をなくす。
