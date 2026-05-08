@@ -1,7 +1,7 @@
 {
-  "name": "Wakasagi Auto Link Map v11.5",
+  "name": "Wakasagi Map v11.6",
   "short_name": "Wakasagi Map",
-  "start_url": "./index.html?v=115",
+  "start_url": "./index.html?v=116",
   "display": "standalone",
   "background_color": "#07111f",
   "theme_color": "#07111f",
