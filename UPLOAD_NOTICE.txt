@@ -1,3 +1,0 @@
-このzipは「既存ファイルを削除して全置換」ではありません。
-GitHubのwakasagi-companion直下へ上書き追加してください。
-app-v1184.js と style-v1184.css は既存を必ず残します。

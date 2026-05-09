@@ -299,3 +299,80 @@ body{
 .popupSelectedDetail{
   min-height:28px;
 }
+
+/* === WAKASAGI POPUP LARGE ONLY START === */
+/* v11.8.4の地図・処理は変えず、Leafletポップアップ内だけ拡大 */
+
+.leaflet-popup-content-wrapper {
+  border-radius: 14px !important;
+}
+
+.leaflet-popup-content {
+  font-size: 18px !important;
+  line-height: 1.65 !important;
+  min-width: 260px !important;
+  max-width: min(86vw, 420px) !important;
+}
+
+.leaflet-popup-content * {
+  line-height: 1.65 !important;
+}
+
+.leaflet-popup-content .popupTitle {
+  font-size: 22px !important;
+  font-weight: 950 !important;
+  margin-bottom: 8px !important;
+}
+
+.leaflet-popup-content .popupMeta {
+  font-size: 18px !important;
+  color: #334155 !important;
+}
+
+.leaflet-popup-content .popupDates {
+  gap: 8px !important;
+  margin-top: 10px !important;
+}
+
+.leaflet-popup-content .popupDateBtn {
+  width: 100% !important;
+  min-height: 56px !important;
+  border-radius: 13px !important;
+  padding: 12px 14px !important;
+  font-size: 20px !important;
+  font-weight: 950 !important;
+  text-align: left !important;
+}
+
+.leaflet-popup-content .popupDateBtn span {
+  font-size: 16px !important;
+}
+
+.leaflet-popup-content .popupInlineDetail,
+.leaflet-popup-content .popupSelectedDetail {
+  margin-top: 10px !important;
+  padding-top: 10px !important;
+  font-size: 18px !important;
+  line-height: 1.65 !important;
+}
+
+.leaflet-popup-content .popupInlineDetail .kvMini {
+  grid-template-columns: 96px 1fr !important;
+  gap: 6px !important;
+  font-size: 18px !important;
+}
+
+.leaflet-popup-content .popupInlineDetail .logMini {
+  margin-top: 10px !important;
+  padding: 10px !important;
+  border-radius: 12px !important;
+  font-size: 18px !important;
+}
+
+.leaflet-popup-close-button {
+  font-size: 28px !important;
+  width: 42px !important;
+  height: 42px !important;
+  line-height: 42px !important;
+}
+/* === WAKASAGI POPUP LARGE ONLY END === */
