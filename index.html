@@ -1,17 +1,21 @@
 <!doctype html>
 <html lang="ja">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wakasagi Map</title></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Wakasagi Map v11.8.4 FIX-20260509C</title>
+</head>
 <body>
-<p>Wakasagi Map v11.8.4 を開いています...</p>
-<script>
-(function(){
-  const src = new URL(location.href);
-  const dst = new URL("./map-v1184.html", location.href);
-  src.searchParams.forEach((v,k)=>dst.searchParams.set(k,v));
-  dst.searchParams.set("v","1184_TARGETED_FIX");
-  dst.hash = src.hash || "";
-  location.replace(dst.toString());
-})();
-</script>
+  <p>Wakasagi Map v11.8.4 FIX-20260509C を開いています...</p>
+  <script>
+    (function(){
+      const src = new URL(location.href);
+      const dst = new URL("./map-v1184.html", location.href);
+      src.searchParams.forEach((v,k)=>dst.searchParams.set(k,v));
+      dst.searchParams.set("v","FIX_20260509C");
+      dst.hash = src.hash || "";
+      location.replace(dst.toString());
+    })();
+  </script>
 </body>
 </html>
