@@ -1,12 +1,22 @@
 <!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0"><title>Wakasagi Map restore</title></head>
-<body><p>Wakasagi Map v11.8.4へ戻します。</p>
-<script>
-(function(){
-  var q = location.search || '';
-  var hash = location.hash || '';
-  var sep = q ? '&' : '?';
-  location.replace('./map-v1184.html' + q + sep + 'force=' + Date.now() + hash);
-})();
-</script>
-</body></html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Wakasagi Map</title>
+</head>
+<body>
+  <p>Wakasagi Map v11.8.4 を開いています...</p>
+  <script>
+    (function(){
+      const src = new URL(location.href);
+      const dst = new URL('./map-v1184.html', location.href);
+      src.searchParams.forEach((v,k)=>dst.searchParams.set(k,v));
+      dst.searchParams.set('v','1184_restore_1');
+      dst.searchParams.set('force', String(Date.now()));
+      dst.hash = src.hash;
+      location.replace(dst.toString());
+    })();
+  </script>
+</body>
+</html>
