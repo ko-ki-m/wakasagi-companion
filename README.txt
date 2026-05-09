@@ -1,32 +1,19 @@
-Wakasagi Map v11.9 Senior UI 本番反映用
-
-このzipに含めるファイル:
-1. map-v119.html
-2. app-v119.js
-3. style-v119.css
-4. manifest-v119.webmanifest
-5. force-v119.html
-6. icon-192.png
-7. icon-512.png
-8. README.txt
-9. index.html
-10. manifest.webmanifest
-11. service-worker.js
+Wakasagi Map rollback v11.5 restore
 
 目的:
-- GitHub地図アプリを v11.9 Senior UI に更新する。
-- ピンをタップ → その場所の過去釣行日だけ表示。
-- 日付をタップ → その釣行回の詳細表示。
-- ?pico=...&autolink=1 のログ連携を行う。
-- return_url から autolink を削除して無限往復を防ぐ。
-- 古い Service Worker は service-worker.js で自己解除する。
+- v11.6 / v11.7 / v11.8.x のポップアップ日付選択・固有ファイル化などを破棄。
+- ポイント表示ができていた v11.5 fixed nav へ戻す。
+- LOGへ戻る / 操作パネルへ の固定ボタンは残す。
+- Service Worker は無効化し、キャッシュを削除する。
 
-含めないもの:
-- v1184系ファイル
-- v1181/v1182系ファイル
-- Pico Wスケッチ
+更新手順:
+1. GitHub Pages上の既存ファイルを、このフォルダの全ファイルで上書き。
+2. Safariで以下を直接開く。
+   https://ko-ki-m.github.io/wakasagi-companion/force-restore-v115.html
+3. 画面上部が Wakasagi Map v11.5 になっていることを確認。
+4. ポイントが表示されるか確認。
 
-反映確認:
-- 画面上部: Wakasagi Map v11.9 Senior UI
-- app-v119.js先頭: WAKASAGI_MAP_V119_SENIOR_FINAL_20260509
-- map-v119.html内: app-v119.js?v=v119_final_20260509
+Pico W側のURLは一旦このまま:
+https://ko-ki-m.github.io/wakasagi-companion/
+
+今は新機能を足さず、表示復旧を最優先。

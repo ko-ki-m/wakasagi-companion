@@ -1,11 +1,10 @@
 {
-  "name": "Wakasagi Map",
-  "short_name": "WakasagiMap",
-  "start_url": "./force-v119.html",
-  "scope": "./",
+  "name": "Wakasagi Auto Link Map v11.5",
+  "short_name": "Wakasagi Map",
+  "start_url": "./index.html?v=115",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#0f172a",
+  "background_color": "#07111f",
+  "theme_color": "#07111f",
   "icons": [
     {
       "src": "./icon-192.png",
