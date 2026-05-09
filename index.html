@@ -8,7 +8,7 @@
   const src = new URL(location.href);
   const dst = new URL("./map-v1184.html", location.href);
   src.searchParams.forEach((v,k)=>dst.searchParams.set(k,v));
-  dst.searchParams.set("v","1184_date_detail_autolink");
+  dst.searchParams.set("v","1184_TARGETED_FIX");
   dst.hash = src.hash || "";
   location.replace(dst.toString());
 })();

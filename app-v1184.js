@@ -217,6 +217,45 @@ function popup(g){
   }).join('');
   return `<div class="popupTitle">${esc(title(g.latest))}</div><div class="popupMeta">この場所の過去釣行日 ${g.count}回</div><div class="popupDates"><b>見たい釣行日を選択</b>${dateList}</div><div class="popupSelectedDetail">日付をタップすると、その釣行回の詳細を表示します。</div>`;
 }
+
+function popupDetailForTrip(g, t){
+  if(!g || !t) return '<div class="popupSelectedDetail">詳細を表示できません。</div>';
+  const gid = String(g.group_id).replace(/'/g, "\\'");
+  return `<div class="popupTitle">${esc(title(t))}</div>
+          <div class="popupMeta">選択した釣行回の詳細</div>
+          ${popupTripMini(t, {lat:g.lat, lng:g.lng})}
+          <button type="button" class="popupDateBtn" data-popup-back="1" data-group-id="${esc(g.group_id)}" onclick="window.wakasagiPopupBack('${gid}')">日付一覧へ戻る</button>`;
+}
+
+window.wakasagiPopupTrip = async function(groupId, tripId){
+  const g = groups.find(x => String(x.group_id) === String(groupId));
+  const trips = await getAllTrips();
+  const t = trips.find(x => String(x.trip_id) === String(tripId));
+  if(!t) return;
+
+  selectedTripId = t.trip_id;
+  if(g) selectedGroupId = g.group_id;
+
+  try{ showTripDetail(t, g ? {lat:g.lat, lng:g.lng} : null); }catch(e){}
+  try{ if(g) renderPointHistory(g, t.trip_id); }catch(e){}
+  try{ if(g) drawSelected(g.lat, g.lng); }catch(e){}
+  try{ enableLinkButton(); }catch(e){}
+  try{ setBadge('selectedBadge','選択中','good'); }catch(e){}
+
+  if(g && g.marker){
+    g.marker.setPopupContent(popupDetailForTrip(g, t));
+    g.marker.openPopup();
+  }
+};
+
+window.wakasagiPopupBack = function(groupId){
+  const g = groups.find(x => String(x.group_id) === String(groupId));
+  if(g && g.marker){
+    g.marker.setPopupContent(popup(g));
+    g.marker.openPopup();
+  }
+};
+
 function showGroupNoRedraw(g){
   if(!g) return;
   selectedGroupId = g.group_id;
@@ -453,6 +492,15 @@ async function importPayload(payload){
 
 function utf8ToB64(s){ return btoa(unescape(encodeURIComponent(s))); }
 function b64ToUtf8(s){ return decodeURIComponent(escape(atob(s))); }
+function decodeLogsyncPayload(raw){
+  const txt = decodeURIComponent(String(raw || ''));
+  try{ return JSON.parse(txt); }catch(e){}
+  const b64 = txt.replace(/-/g,'+').replace(/_/g,'/');
+  const padded = b64 + '==='.slice((b64.length + 3) % 4);
+  try{ return JSON.parse(b64ToUtf8(padded)); }catch(e){}
+  try{ return JSON.parse(atob(padded)); }catch(e){}
+  throw new Error('logsync JSON/base64 decode failed');
+}
 function getPicoIp(){
   const el = $('picoIp');
   const v = (el && el.value ? el.value.trim() : '') || localStorage.getItem('pico_ip') || '192.168.4.1';
@@ -537,7 +585,7 @@ async function receiveLogSync(){
   if(!location.hash || !location.hash.includes('logsync=')) return;
   try{
     const raw = location.hash.split('logsync=')[1].split('&')[0];
-    const payload = JSON.parse(b64ToUtf8(decodeURIComponent(raw)));
+    const payload = decodeLogsyncPayload(raw);
     setBadge('logSyncBadge','同期中','warn');
     let trips = await getAllTrips();
     let target = null;
@@ -558,6 +606,10 @@ async function receiveLogSync(){
       await putTrip(target);
       selectedTripId = target.trip_id;
       setBadge('logSyncBadge','同期済み','good');
+      setBadge('linkBadge','連携済み','good');
+      setBadge('autoLinkBadge','完了','good');
+      $('linkStatus').textContent = 'Pico Wの現在sidへ地点情報を保存し、地図へ戻りました。';
+      $('autoLinkStatus').textContent = '自動連携は完了しました。';
       $('logSyncBox').innerHTML = `<div class="logGrid"><b>sid</b><span>${esc(summary.sid||'-')}</span><b>FISH</b><span>${esc(summary.fish_count ?? '-')}</span><b>MARK</b><span>${esc(summary.mark_count ?? '-')}</span><b>ログ数</b><span>${esc(summary.tlog_count ?? '-')}</span></div>`;
       {
         const clean = new URL(location.href);
@@ -568,8 +620,12 @@ async function receiveLogSync(){
       }
       await refreshAll();
       await selectTrip(target.trip_id);
+    } else {
+      setBadge('logSyncBadge','座標なし','warn');
+      setBadge('linkBadge','未完了','warn');
+      $('linkStatus').textContent = 'Pico Wから戻りましたが、保存できる地点情報がありませんでした。';
     }
-  }catch(e){ setBadge('logSyncBadge','エラー','bad'); $('logSyncBox').textContent = 'logsyncを読めません: ' + e.message; }
+  }catch(e){ setBadge('logSyncBadge','エラー','bad'); setBadge('linkBadge','エラー','bad'); $('linkStatus').textContent='logsyncを読めません: '+e.message; $('logSyncBox').textContent = 'logsyncを読めません: ' + e.message; }
 }
 
 async function init(){
@@ -599,13 +655,20 @@ async function init(){
   $('picoIp').onchange = () => { localStorage.setItem('pico_ip', getPicoIp()); updateFixedNav(); };
   $('btnLinkToPico').onclick = linkToPicoLog;
   updateFixedNav();
+  if(sessionStorage.getItem('wakasagi_linked_notice') === '1'){
+    setBadge('linkBadge','連携済み','good');
+    setBadge('logSyncBadge','同期済み','good');
+    $('linkStatus').textContent = 'Pico Wの現在sidへ地点情報を保存して戻りました。';
+    $('autoLinkStatus').textContent = '自動連携は完了しました。';
+  }
   document.addEventListener('click', ev => {
     const pd = ev.target.closest('.popupDateBtn[data-trip-id]');
     if(pd){
       ev.preventDefault();
+      ev.stopPropagation();
       const id = pd.getAttribute('data-trip-id');
       const gid = pd.getAttribute('data-group-id') || selectedGroupId;
-      if(window.wakasagiPopupTrip) window.wakasagiPopupTrip(gid, id);
+      if(id && window.wakasagiPopupTrip) window.wakasagiPopupTrip(gid, id);
       return;
     }
     const t = ev.target.closest('[data-trip-id]');
