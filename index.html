@@ -8,12 +8,14 @@
 <body>
   <p>Wakasagi Map v11.8.4 を開いています...</p>
   <script>
-    (function(){
+    (function () {
       const src = new URL(location.href);
       const dst = new URL('./map-v1184.html', location.href);
-      src.searchParams.forEach((v,k)=>dst.searchParams.set(k,v));
-      dst.searchParams.set('v','1184_restore_1');
-      dst.searchParams.set('force', String(Date.now()));
+      src.searchParams.forEach((v, k) => {
+        if (k !== 'autolink') dst.searchParams.set(k, v);
+      });
+      dst.searchParams.set('v', '1184');
+      dst.searchParams.set('stoploop', '1');
       dst.hash = src.hash;
       location.replace(dst.toString());
     })();

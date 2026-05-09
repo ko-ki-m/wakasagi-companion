@@ -456,7 +456,9 @@ function applyPicoParam(){
   try{
     const p = new URLSearchParams(location.search);
     const pico = p.get('pico');
-    if(p.get('autolink') === '1') sessionStorage.setItem('wakasagi_autolink_once','1');
+    // 緊急復旧: autolink=1 で /log と map が往復し続ける事故を防ぐ。
+    // Pico WのIPだけ受け取り、自動連携は行わない。手動連携ボタンは残す。
+    sessionStorage.removeItem('wakasagi_autolink_once');
     if(p.get('linked') === '1') sessionStorage.setItem('wakasagi_linked_notice','1');
     if(pico){
       const host = decodeURIComponent(pico).replace(/^https?:\/\//,'').replace(/\/.*$/,'');
@@ -476,13 +478,22 @@ async function getSelectedTripForLink(){
   if(selectedGroupId){ const g = groups.find(x => String(x.group_id) === String(selectedGroupId)); if(g && g.latest) return g.latest; }
   return null;
 }
+
+function makeSafeReturnUrl(){
+  const u = new URL(location.href.split('#')[0], location.href);
+  u.searchParams.delete('autolink');
+  u.searchParams.set('linked', '1');
+  u.searchParams.set('v', '1184');
+  return u.toString();
+}
+
 async function makeMapLinkPayload(){
   const t = await getSelectedTripForLink();
   if(t){
-    return {v:1, source:'wakasagi_map_v11', map_spot_id:String(t.trip_id||''), lat:Number(t.lat), lng:Number(t.lng), acc:Number(t.accuracy_m||0), lake_name:String(t.lake_name||''), point_name:String(t.point_name||''), place_name:String(t.point_name||t.lake_name||''), line_no:String(t.line_no||''), sinker_g:String(t.sinker_g||''), fishfinder_m:String(t.fishfinder_depth_m||t.fishfinder_m||''), water_temp_c:String(t.water_temp_c||''), note:String(t.memo||''), history_date_ms:Number(t.date_ms||t.start_ms||0), linked_ms:Date.now(), return_url:location.href.split('#')[0]};
+    return {v:1, source:'wakasagi_map_v11', map_spot_id:String(t.trip_id||''), lat:Number(t.lat), lng:Number(t.lng), acc:Number(t.accuracy_m||0), lake_name:String(t.lake_name||''), point_name:String(t.point_name||''), place_name:String(t.point_name||t.lake_name||''), line_no:String(t.line_no||''), sinker_g:String(t.sinker_g||''), fishfinder_m:String(t.fishfinder_depth_m||t.fishfinder_m||''), water_temp_c:String(t.water_temp_c||''), note:String(t.memo||''), history_date_ms:Number(t.date_ms||t.start_ms||0), linked_ms:Date.now(), return_url:makeSafeReturnUrl()};
   }
   if(currentPos && Number.isFinite(Number(currentPos.lat)) && Number.isFinite(Number(currentPos.lng))){
-    return {v:1, source:'wakasagi_map_v11', map_spot_id:'CURRENT_'+Date.now(), lat:Number(currentPos.lat), lng:Number(currentPos.lng), acc:Number(currentPos.acc||0), lake_name:'', point_name:'現在地', place_name:'現在地', line_no:'', sinker_g:'', fishfinder_m:'', water_temp_c:'', note:'地図アプリ現在地から連携', linked_ms:Date.now(), return_url:location.href.split('#')[0]};
+    return {v:1, source:'wakasagi_map_v11', map_spot_id:'CURRENT_'+Date.now(), lat:Number(currentPos.lat), lng:Number(currentPos.lng), acc:Number(currentPos.acc||0), lake_name:'', point_name:'現在地', place_name:'現在地', line_no:'', sinker_g:'', fishfinder_m:'', water_temp_c:'', note:'地図アプリ現在地から連携', linked_ms:Date.now(), return_url:makeSafeReturnUrl()};
   }
   return null;
 }
@@ -505,14 +516,13 @@ function enableLinkButton(){
   btn.disabled = !ok;
 }
 async function maybeAutoLink(){
-  if(autoLinkDone) return;
-  if(sessionStorage.getItem('wakasagi_autolink_once') !== '1') return;
-  if(!currentPos) return;
+  // 緊急復旧: 自動で /log へ飛ばさない。
+  // 無限往復を防ぐため、通常は地図表示だけを行う。
   autoLinkDone = true;
   sessionStorage.removeItem('wakasagi_autolink_once');
-  setBadge('autoLinkBadge','自動連携','warn');
-  $('autoLinkStatus').textContent = '現在地取得後、自動でPico W /logへ連携します。';
-  setTimeout(linkToPicoLog, 800);
+  setBadge('autoLinkBadge','手動のみ','warn');
+  const el = $('autoLinkStatus');
+  if(el) el.textContent = '自動連携は停止中です。必要な時だけ「この地点を本体ログへ連携」を押します。';
 }
 async function receiveLogSync(){
   if(!location.hash || !location.hash.includes('logsync=')) return;

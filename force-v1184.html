@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Force Wakasagi Map v11.8.4</title>
   <style>
-    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:24px;font-size:18px;line-height:1.6}
+    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;padding:24px;font-size:18px;line-height:1.6}
     button{font-size:20px;min-height:56px;padding:12px 18px;border-radius:12px}
   </style>
 </head>
 <body>
   <h1>Wakasagi Map v11.8.4</h1>
-  <p>古いキャッシュを消して、v11.8.4 を開きます。</p>
-  <button id="openBtn" type="button">v11.8.4を開く</button>
+  <p>古いキャッシュを消して、無限往復しない復旧版を開きます。</p>
+  <button id="openBtn">v11.8.4を開く</button>
   <script>
     async function cleanup(){
       try{ if('serviceWorker' in navigator){ const regs=await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r=>r.unregister())); } }catch(e){}
@@ -21,9 +21,10 @@
     function openMap(){
       const src = new URL(location.href);
       const dst = new URL('./map-v1184.html', location.href);
-      src.searchParams.forEach((v,k)=>dst.searchParams.set(k,v));
-      dst.searchParams.set('v','1184_restore_1');
-      dst.searchParams.set('force', String(Date.now()));
+      src.searchParams.forEach((v,k)=>{ if(k !== 'autolink') dst.searchParams.set(k,v); });
+      dst.searchParams.set('v','1184');
+      dst.searchParams.set('stoploop','1');
+      dst.searchParams.set('force',String(Date.now()));
       dst.hash = src.hash;
       location.replace(dst.toString());
     }
