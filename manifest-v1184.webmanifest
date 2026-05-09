@@ -1,10 +1,11 @@
 {
-  "name": "Wakasagi Map v11.8.4",
-  "short_name": "Wakasagi Map",
-  "start_url": "./map-v1184.html?v=1184",
+  "name": "Wakasagi Map",
+  "short_name": "WakasagiMap",
+  "start_url": "./force-v1184.html",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#07111f",
-  "theme_color": "#07111f",
+  "background_color": "#ffffff",
+  "theme_color": "#0f172a",
   "icons": [
     {
       "src": "./icon-192.png",
