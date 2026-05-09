@@ -210,7 +210,11 @@ function popupTripMini(t, base){
 }
 function popup(g){
   const trips = (g.trips || []).slice().sort((a,b) => tms(b)-tms(a));
-  const dateList = trips.map(t => `<button type="button" class="popupDateBtn" data-trip-id="${esc(t.trip_id)}">${esc(fmtTime(tms(t)))}</button>`).join('');
+  const dateList = trips.map(t => {
+    const gid = String(g.group_id).replace(/'/g, "\\'");
+    const tid = String(t.trip_id).replace(/'/g, "\\'");
+    return `<button type="button" class="popupDateBtn" data-group-id="${esc(g.group_id)}" data-trip-id="${esc(t.trip_id)}" onclick="window.wakasagiPopupTrip('${gid}','${tid}')">${esc(fmtTime(tms(t)))}</button>`;
+  }).join('');
   return `<div class="popupTitle">${esc(title(g.latest))}</div><div class="popupMeta">この場所の過去釣行日 ${g.count}回</div><div class="popupDates"><b>見たい釣行日を選択</b>${dateList}</div><div class="popupSelectedDetail">日付をタップすると、その釣行回の詳細を表示します。</div>`;
 }
 function showGroupNoRedraw(g){
@@ -231,7 +235,9 @@ async function renderMap(){
   groups = makeGroups(trips);
   for(const g of groups){
     const ic = L.divIcon({className:'', html:`<div class="${markerClass(g)}">${g.count}</div>`, iconSize:[38,38], iconAnchor:[19,19], popupAnchor:[0,-18]});
-    L.marker([g.lat,g.lng], {icon:ic}).addTo(groupLayer).bindPopup(popup(g), {maxWidth:420, minWidth:280, autoPan:true, closeButton:true}).on('click', () => showGroupNoRedraw(g));
+    const mk = L.marker([g.lat,g.lng], {icon:ic}).addTo(groupLayer).bindPopup(popup(g), {maxWidth:420, minWidth:280, autoPan:true, closeButton:true});
+    g.marker = mk;
+    mk.on('click', () => showGroupNoRedraw(g));
   }
   setBadge('allBadge', `${trips.length}件`, trips.length ? 'good' : '');
 }
@@ -456,9 +462,11 @@ function applyPicoParam(){
   try{
     const p = new URLSearchParams(location.search);
     const pico = p.get('pico');
-    // 復旧版: 地図と/logの無限往復を防ぐため、自動連携フラグは立てない。
-    // Pico W IPだけ受け取り、連携は手動ボタンで行う。
-    sessionStorage.removeItem('wakasagi_autolink_once');
+    if(p.get('autolink') === '1' && p.get('linked') !== '1' && !(location.hash || '').includes('logsync=')){
+      sessionStorage.setItem('wakasagi_autolink_once','1');
+    } else {
+      sessionStorage.removeItem('wakasagi_autolink_once');
+    }
     if(p.get('linked') === '1') sessionStorage.setItem('wakasagi_linked_notice','1');
     if(pico){
       const host = decodeURIComponent(pico).replace(/^https?:\/\//,'').replace(/\/.*$/,'');
@@ -478,13 +486,22 @@ async function getSelectedTripForLink(){
   if(selectedGroupId){ const g = groups.find(x => String(x.group_id) === String(selectedGroupId)); if(g && g.latest) return g.latest; }
   return null;
 }
+
+function makeSafeReturnUrl(){
+  const u = new URL(location.href.split('#')[0], location.href);
+  u.searchParams.delete('autolink');
+  u.searchParams.set('linked','1');
+  u.searchParams.set('v','1184');
+  return u.toString();
+}
+
 async function makeMapLinkPayload(){
   const t = await getSelectedTripForLink();
   if(t){
-    return {v:1, source:'wakasagi_map_v11', map_spot_id:String(t.trip_id||''), lat:Number(t.lat), lng:Number(t.lng), acc:Number(t.accuracy_m||0), lake_name:String(t.lake_name||''), point_name:String(t.point_name||''), place_name:String(t.point_name||t.lake_name||''), line_no:String(t.line_no||''), sinker_g:String(t.sinker_g||''), fishfinder_m:String(t.fishfinder_depth_m||t.fishfinder_m||''), water_temp_c:String(t.water_temp_c||''), note:String(t.memo||''), history_date_ms:Number(t.date_ms||t.start_ms||0), linked_ms:Date.now(), return_url:location.href.split('#')[0]};
+    return {v:1, source:'wakasagi_map_v11', map_spot_id:String(t.trip_id||''), lat:Number(t.lat), lng:Number(t.lng), acc:Number(t.accuracy_m||0), lake_name:String(t.lake_name||''), point_name:String(t.point_name||''), place_name:String(t.point_name||t.lake_name||''), line_no:String(t.line_no||''), sinker_g:String(t.sinker_g||''), fishfinder_m:String(t.fishfinder_depth_m||t.fishfinder_m||''), water_temp_c:String(t.water_temp_c||''), note:String(t.memo||''), history_date_ms:Number(t.date_ms||t.start_ms||0), linked_ms:Date.now(), return_url:makeSafeReturnUrl()};
   }
   if(currentPos && Number.isFinite(Number(currentPos.lat)) && Number.isFinite(Number(currentPos.lng))){
-    return {v:1, source:'wakasagi_map_v11', map_spot_id:'CURRENT_'+Date.now(), lat:Number(currentPos.lat), lng:Number(currentPos.lng), acc:Number(currentPos.acc||0), lake_name:'', point_name:'現在地', place_name:'現在地', line_no:'', sinker_g:'', fishfinder_m:'', water_temp_c:'', note:'地図アプリ現在地から連携', linked_ms:Date.now(), return_url:location.href.split('#')[0]};
+    return {v:1, source:'wakasagi_map_v11', map_spot_id:'CURRENT_'+Date.now(), lat:Number(currentPos.lat), lng:Number(currentPos.lng), acc:Number(currentPos.acc||0), lake_name:'', point_name:'現在地', place_name:'現在地', line_no:'', sinker_g:'', fishfinder_m:'', water_temp_c:'', note:'地図アプリ現在地から連携', linked_ms:Date.now(), return_url:makeSafeReturnUrl()};
   }
   return null;
 }
@@ -542,7 +559,13 @@ async function receiveLogSync(){
       selectedTripId = target.trip_id;
       setBadge('logSyncBadge','同期済み','good');
       $('logSyncBox').innerHTML = `<div class="logGrid"><b>sid</b><span>${esc(summary.sid||'-')}</span><b>FISH</b><span>${esc(summary.fish_count ?? '-')}</span><b>MARK</b><span>${esc(summary.mark_count ?? '-')}</span><b>ログ数</b><span>${esc(summary.tlog_count ?? '-')}</span></div>`;
-      history.replaceState(null, document.title, location.pathname + location.search);
+      {
+        const clean = new URL(location.href);
+        clean.hash = '';
+        clean.searchParams.delete('autolink');
+        clean.searchParams.set('linked','1');
+        history.replaceState(null, document.title, clean.pathname + clean.search);
+      }
       await refreshAll();
       await selectTrip(target.trip_id);
     }
@@ -578,7 +601,13 @@ async function init(){
   updateFixedNav();
   document.addEventListener('click', ev => {
     const pd = ev.target.closest('.popupDateBtn[data-trip-id]');
-    if(pd){ ev.preventDefault(); const id=pd.getAttribute('data-trip-id'); selectTrip(id); const box=pd.closest('.leaflet-popup-content')?.querySelector('.popupSelectedDetail'); getAllTrips().then(trips=>{ const t=trips.find(x=>String(x.trip_id)===String(id)); if(t && box) box.innerHTML=popupTripMini(t); }); return; }
+    if(pd){
+      ev.preventDefault();
+      const id = pd.getAttribute('data-trip-id');
+      const gid = pd.getAttribute('data-group-id') || selectedGroupId;
+      if(window.wakasagiPopupTrip) window.wakasagiPopupTrip(gid, id);
+      return;
+    }
     const t = ev.target.closest('[data-trip-id]');
     if(t){ ev.preventDefault(); selectTrip(t.getAttribute('data-trip-id')); return; }
     const g = ev.target.closest('[data-group-id]');

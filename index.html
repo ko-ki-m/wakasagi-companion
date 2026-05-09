@@ -7,8 +7,8 @@
 (function(){
   const src = new URL(location.href);
   const dst = new URL("./map-v1184.html", location.href);
-  src.searchParams.forEach((v,k)=>{ if(k !== "autolink") dst.searchParams.set(k,v); });
-  dst.searchParams.set("v","1184_previous_display");
+  src.searchParams.forEach((v,k)=>dst.searchParams.set(k,v));
+  dst.searchParams.set("v","1184_date_detail_autolink");
   dst.hash = src.hash || "";
   location.replace(dst.toString());
 })();

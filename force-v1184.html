@@ -7,7 +7,7 @@
 </head>
 <body>
 <h1>Wakasagi Map v11.8.4</h1>
-<p>古いキャッシュを消して、前の表示状態へ戻します。</p>
+<p>古いキャッシュを消して、日付→詳細表示と自動連携の修正版を開きます。</p>
 <button id="openBtn">v11.8.4を開く</button>
 <script>
 async function cleanup(){
@@ -17,8 +17,8 @@ async function cleanup(){
 function openMap(){
   const src = new URL(location.href);
   const dst = new URL("./map-v1184.html", location.href);
-  src.searchParams.forEach((v,k)=>{ if(k !== "autolink") dst.searchParams.set(k,v); });
-  dst.searchParams.set("v","1184_previous_display");
+  src.searchParams.forEach((v,k)=>dst.searchParams.set(k,v));
+  dst.searchParams.set("v","1184_date_detail_autolink");
   dst.searchParams.set("force",String(Date.now()));
   dst.hash = src.hash || "";
   location.replace(dst.toString());

@@ -1,11 +1,11 @@
-Wakasagi Map v11.8.4 RETURN TO PREVIOUS DISPLAY
+Wakasagi Map v11.8.4 - DATE DETAIL + AUTOLINK FIX
 
 目的:
-- 前スレッドで正常表示されていたv11.8.4の構造へ戻す。
-- 数字ピンをタップすると、その場所の過去釣行日だけをポップアップ表示する。
-- 日付をタップすると、その釣行回の詳細を表示する。
-- 地図タイル散乱を防ぐため、Leaflet CSSの最低限フォールバックをstyle-v1184.cssに追加。
-- /log と map の無限往復を防ぐため autolink=1 は引き継がない。
+- 前の正常表示構造を維持する。
+- ピンをタップしたら、その場所の過去釣行日だけをポップアップ表示する。
+- 日付をタップしたら、ポップアップ内と詳細欄にその釣行回の詳細を表示する。
+- ?pico=...&autolink=1 による自動連携を復旧する。
+- /log から戻る return_url では autolink を削除して linked=1 を付け、無限往復を防ぐ。
 - Pico Wスケッチ、sid、FISH、TelemetryLogEntry、tlog_tick は触らない。
 
 確認:
