@@ -1,3 +1,4 @@
+/* WAKASAGI_REAL_TARGET_FIX_20260509 */
 'use strict';
 
 const DB_NAME = 'wakasagi_trip_map_v10';
