@@ -13,6 +13,7 @@ const DEFAULT_CENTER = [36.2048, 138.2529];
 let db=null, map=null, groupLayer=null;
 let currentPos=null, currentMarker=null, accCircle=null, cur20=null, cur100=null, sel20=null, sel100=null;
 let groups=[], selectedGroupId=null, selectedTripId=null, editingTripId=null;
+let allHistoryExpanded=false;
 
 const $=(id)=>document.getElementById(id);
 function nowMs(){return Date.now();}
@@ -48,7 +49,11 @@ function ensureMap(){if(map)return true;if(!window.L){$('mapStatus').textContent
 function drawCurrent(){if(!currentPos||!ensureMap())return;const a=Number(currentPos.lat),b=Number(currentPos.lng),acc=Number(currentPos.acc||0);[currentMarker,accCircle,cur20,cur100].forEach(x=>{if(x)x.remove();});currentMarker=L.marker([a,b]).addTo(map).bindPopup('現在地');if(acc>0)accCircle=L.circle([a,b],{radius:acc}).addTo(map);cur20=L.circle([a,b],{radius:SAME_POINT_M,weight:2,fillOpacity:.04}).addTo(map);cur100=L.circle([a,b],{radius:SAME_AREA_M,weight:2,fillOpacity:.015}).addTo(map);map.setView([a,b],19);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},50);$('btnFitNear').disabled=false;$('btnSaveScroll').disabled=false;$('btnSaveTrip').disabled=false;}
 function makeGroups(trips){const valid=trips.filter(x=>validLatLng(lat(x),lng(x))).slice().sort((a,b)=>tms(b)-tms(a));const gs=[];for(const t of valid){let best=null,bd=Infinity;for(const g of gs){const dd=dist(lat(t),lng(t),g.lat,g.lng);if(dd<=SAME_POINT_M&&dd<bd){best=g;bd=dd;}}if(best){best.trips.push(t);const n=best.trips.length;best.lat=(best.lat*(n-1)+lat(t))/n;best.lng=(best.lng*(n-1)+lng(t))/n;}else gs.push({group_id:'G'+gs.length+'_'+t.trip_id,lat:lat(t),lng:lng(t),trips:[t]});}for(const g of gs){g.trips.sort((a,b)=>tms(b)-tms(a));g.latest=g.trips[0];g.count=g.trips.length;g.distance_m=currentPos?dist(Number(currentPos.lat),Number(currentPos.lng),g.lat,g.lng):null;g.latest_ms=tms(g.latest);}return gs.sort((a,b)=>currentPos?((a.distance_m??Infinity)-(b.distance_m??Infinity)):(b.latest_ms-a.latest_ms));}
 function markerClass(g){if(selectedGroupId===g.group_id)return'cluster selected';if(g.distance_m!==null&&g.distance_m<=SAME_POINT_M)return'cluster near20';if(g.distance_m!==null&&g.distance_m<=SAME_AREA_M)return'cluster near100';return'cluster';}
-function popup(g){const trips=(g.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));const dates=trips.map(t=>`<a class="popupBtn" href="#" data-trip-id="${esc(t.trip_id)}">${esc(fmtTime(tms(t)).split(' ')[0])}</a>`).join(' ');return`<div class="popupTitle">この地点の過去 ${g.count}回</div><div class="popupMeta">見たい日付を選択してください。</div>${dates||'<div class="popupMeta">履歴がありません。</div>'}`;}
+function popup(g){const trips=(g.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));const dates=trips.map(t=>`<a class="popupBtn" href="#" data-popup-group-id="${esc(g.group_id)}" data-popup-trip-id="${esc(t.trip_id)}">${esc(fmtTime(tms(t)).split(' ')[0])}</a>`).join(' ');return`<div class="popupTitle">この地点の過去 ${g.count}回</div><div class="popupMeta">見たい日付を選択してください。</div>${dates||'<div class="popupMeta">履歴がありません。</div>'}`;}
+function popupTripDetailHtml(g,t){return`<div class="popupTitle">${esc(fmtTime(tms(t)).split(' ')[0])}</div><div class="popupMeta">この釣行回の詳細</div><div class="popupDetail">${detailHtml(t,g?{lat:g.lat,lng:g.lng}:null)}</div><a class="popupBtn" href="#" data-popup-back-group-id="${esc(g?g.group_id:'')}">日付一覧へ戻る</a>`;}
+async function showPopupTripDetail(groupId,tripId,box){const trips=await getAllTrips();const t=trips.find(x=>String(x.trip_id)===String(tripId));if(!t)return;let g=(groups||[]).find(x=>String(x.group_id)===String(groupId));if(!g){g=(groups||[]).find(x=>(x.trips||[]).some(y=>String(y.trip_id)===String(tripId)))||null;}if(box)box.innerHTML=popupTripDetailHtml(g,t);selectedTripId=t.trip_id;selectedGroupId=g?g.group_id:selectedGroupId;showTripDetail(t,g?{lat:g.lat,lng:g.lng}:null);}
+function showPopupDateList(groupId,box){const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));if(g&&box)box.innerHTML=popup(g);}
+
 async function renderMap(){ensureMap();if(!groupLayer)return;groupLayer.clearLayers();const trips=await getAllTrips();groups=makeGroups(trips);for(const g of groups){const ic=L.divIcon({className:'',html:`<div class="${markerClass(g)}">${g.count}</div>`,iconSize:[38,38],iconAnchor:[19,19],popupAnchor:[0,-18]});L.marker([g.lat,g.lng],{icon:ic}).addTo(groupLayer).bindPopup(popup(g));}}
 
 function updatePosition(pos){currentPos={lat:Number(pos.lat),lng:Number(pos.lng),acc:Number(pos.acc||0),t:Number(pos.t||nowMs())};$('latView').textContent=currentPos.lat.toFixed(7);$('lngView').textContent=currentPos.lng.toFixed(7);$('accView').textContent=currentPos.acc?`±${Math.round(currentPos.acc)}m`:'-';$('timeView').textContent=fmtTime(currentPos.t);$('locStatus').textContent='現在地を確認しました。';setBadge('locBadge','取得済み',currentPos.acc>0&&currentPos.acc<=20?'good':'warn');metaSet('last_pos',currentPos);drawCurrent();refreshAll();}
@@ -68,7 +73,33 @@ function showTripDetail(t,base=null){selectedTripId=t.trip_id;$('selectedMini').
 async function renderPointHistory(g,focusId){const all=groups.flatMap(x=>x.trips);const same=g.trips.slice().sort((a,b)=>tms(b)-tms(a));const near=all.filter(t=>!same.some(s=>s.trip_id===t.trip_id)).map(t=>({t,d:dBase(t,g.lat,g.lng)})).filter(x=>x.d!==null&&x.d<=SAME_AREA_M).sort((a,b)=>a.d-b.d||tms(b.t)-tms(a.t)).map(x=>x.t);setBadge('pointBadge',`同一${same.length}/近辺${near.length}`,'good');$('pointHistoryPanel').className='detail';$('pointHistoryPanel').innerHTML=`<div class="subhead">このポイントの過去釣行 <span class="chip">20m以内 ${same.length}回</span></div><div class="list">${same.map(t=>itemHtml(t,'同一',g,t.trip_id===focusId)).join('')}</div><div class="subhead">近辺の過去釣行 <span class="chip">100m以内 ${near.length}回</span></div><div class="list">${near.length?near.map(t=>itemHtml(t,'近辺',g,false)).join(''):'<p class="muted">近辺履歴はありません。</p>'}</div>`;}
 async function refreshCounts(){const trips=await getAllTrips();$('totalTrips').textContent=String(trips.length);if(!currentPos){$('count20').textContent='-';$('count100').textContent='-';return;}const arr=trips.map(t=>dCurrent(t)).filter(d=>d!==null);const n20=arr.filter(d=>d<=SAME_POINT_M).length,n100=arr.filter(d=>d<=SAME_AREA_M).length;$('count20').textContent=String(n20);$('count100').textContent=String(n100);}
 function filterTrips(trips){const q=($('searchBox').value||'').trim().toLowerCase();let list=trips.slice();if(q){list=list.filter(t=>[fmtTime(tms(t)),t.lake_name,t.point_name,t.line_no,t.sinker_g,t.fishfinder_depth_m,t.water_temp_c,t.weather,t.wind,t.memo].join(' ').toLowerCase().includes(q));}const m=$('sortMode').value;list.sort((a,b)=>{if(m==='date_desc')return tms(b)-tms(a);if(m==='date_asc')return tms(a)-tms(b);if(m==='name')return(`${a.lake_name||''} ${a.point_name||''}`).localeCompare(`${b.lake_name||''} ${b.point_name||''}`,'ja');if(currentPos)return(dCurrent(a)??Infinity)-(dCurrent(b)??Infinity);return tms(b)-tms(a);});return list;}
-async function renderAllList(){const trips=filterTrips(await getAllTrips());$('dbView').textContent=`過去釣行履歴 ${trips.length}件表示中`;const box=$('allHistoryList');box.innerHTML='';for(const t of trips){box.insertAdjacentHTML('beforeend',itemHtml(t,'履歴',null,t.trip_id===selectedTripId));}}
+async function renderAllList(){
+  const trips=filterTrips(await getAllTrips());
+  $('dbView').textContent=`過去釣行履歴 ${trips.length}件`;
+  const box=$('allHistoryList');
+  if(!box)return;
+
+  if(!allHistoryExpanded){
+    box.innerHTML=`<button id="btnShowAllHistory" class="primary" type="button">全履歴を表示</button><p class="muted">通常時は長い履歴リストを表示しません。必要な時だけ全履歴を開きます。</p>`;
+    const b=$('btnShowAllHistory');
+    if(b)b.onclick=()=>{allHistoryExpanded=true;renderAllList();};
+    return;
+  }
+
+  box.innerHTML=`<button id="btnHideAllHistory" type="button">全履歴を閉じる</button><div class="subhead">全履歴の日付一覧 <span class="chip">${trips.length}件</span></div><div id="allHistoryDateList" class="list"></div><div id="allHistoryDetailPanel" class="emptyBox">日付をタップすると詳細を表示します。</div>`;
+  const hide=$('btnHideAllHistory');
+  if(hide)hide.onclick=()=>{allHistoryExpanded=false;renderAllList();};
+
+  const list=$('allHistoryDateList');
+  for(const t of trips){
+    const btn=document.createElement('button');
+    btn.type='button';
+    btn.className='item'+(t.trip_id===selectedTripId?' selected':'');
+    btn.setAttribute('data-all-date-trip-id',String(t.trip_id));
+    btn.innerHTML=`<div class="top"><span>${esc(fmtTime(tms(t)))}</span><span>${esc(title(t))}</span></div>`;
+    list.appendChild(btn);
+  }
+}
 async function updateDb(){const trips=await getAllTrips();groups=makeGroups(trips);$('dbView').textContent=`過去釣行履歴 ${trips.length}件 / 地図ポイント ${groups.length}件`;setBadge('groupView',`地図${groups.length}`,'good');await renderAllList();}
 async function refreshAll(){await renderMap();await refreshCounts();await updateDb();}
 function loadToForm(id){getAllTrips().then(trips=>{const t=trips.find(x=>x.trip_id===id);if(!t)return;editingTripId=id;fillForm(t);$('btnUpdateTrip').disabled=false;$('btnLoadSelected').disabled=false;setBadge('saveBadge','編集中','warn');document.getElementById('tripDate').scrollIntoView({behavior:'smooth',block:'center'});});}
@@ -83,7 +114,55 @@ async function exportDb(){const trips=await getAllTrips();downloadBlob(`wakasagi
 async function importPayload(payload){const rows=Array.isArray(payload)?payload:(payload.trips||payload.trip_records||payload.spots||[]);if(!Array.isArray(rows))return-1;let c=0;for(const r of rows){let t=r.trip_id?r:normalizeOld(r);if(!t)continue;t.trip_id=t.trip_id||genId('T');t.date_ms=Number(t.date_ms||t.start_ms||nowMs());t.lat=Number(t.lat);t.lng=Number(t.lng);if(!validLatLng(t.lat,t.lng))continue;t.updated_ms=nowMs();await putTrip(t);c++;}return c;}
 async function initPwa(){if('serviceWorker'in navigator){try{await navigator.serviceWorker.register('./service-worker.js?v=10');}catch(e){}}}
 async function init(){if(window.isSecureContext)setBadge('secureBadge','GPS可','good');else setBadge('secureBadge','HTTPS必要','bad');db=await openDb();ensureMap();$('tripDate').value=toLocal(nowMs());const n=await migrateOld(false);if(n>0)$('mapStatus').textContent=`旧データ${n}件を移行しました。`;
-$('btnLocate').onclick=locate;$('btnFitAll').onclick=fitAll;$('btnFitNear').onclick=fitNear;$('btnSaveScroll').onclick=()=>$('tripDate').scrollIntoView({behavior:'smooth',block:'center'});$('btnSaveTrip').onclick=saveTrip;$('btnLoadSelected').onclick=()=>selectedTripId&&loadToForm(selectedTripId);$('btnUpdateTrip').onclick=updateTrip;$('btnClearForm').onclick=clearForm;$('btnExport').onclick=exportDb;$('btnImport').onclick=()=>$('importFile').click();$('importFile').onchange=async e=>{const f=e.target.files&&e.target.files[0];if(!f)return;let p;try{p=JSON.parse(await f.text());}catch(err){alert('JSONを読めません。');return;}const c=await importPayload(p);alert(`${c}件を読み込みました。`);await refreshAll();};$('btnMigrate').onclick=async()=>{const c=await migrateOld(true);alert(`旧データ移行 ${c}件`);await refreshAll();};$('btnClearDb').onclick=async()=>{if(confirm('テストDBを消去しますか？')){await new Promise(res=>{const tx=db.transaction([STORE_TRIPS,STORE_META],'readwrite');tx.objectStore(STORE_TRIPS).clear();tx.objectStore(STORE_META).clear();tx.oncomplete=()=>res();});location.reload();}};$('searchBox').oninput=renderAllList;$('sortMode').onchange=renderAllList;document.addEventListener('click',ev=>{const g=ev.target.closest('[data-group-id]');if(g){ev.preventDefault();selectGroup(g.getAttribute('data-group-id'));return;}const t=ev.target.closest('[data-trip-id]');if(t){ev.preventDefault();selectTrip(t.getAttribute('data-trip-id'));}});await initPwa();await refreshAll();const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng)))updatePosition(last);locate();}
+$('btnLocate').onclick=locate;$('btnFitAll').onclick=fitAll;$('btnFitNear').onclick=fitNear;$('btnSaveScroll').onclick=()=>$('tripDate').scrollIntoView({behavior:'smooth',block:'center'});$('btnSaveTrip').onclick=saveTrip;$('btnLoadSelected').onclick=()=>selectedTripId&&loadToForm(selectedTripId);$('btnUpdateTrip').onclick=updateTrip;$('btnClearForm').onclick=clearForm;$('btnExport').onclick=exportDb;$('btnImport').onclick=()=>$('importFile').click();$('importFile').onchange=async e=>{const f=e.target.files&&e.target.files[0];if(!f)return;let p;try{p=JSON.parse(await f.text());}catch(err){alert('JSONを読めません。');return;}const c=await importPayload(p);alert(`${c}件を読み込みました。`);await refreshAll();};$('btnMigrate').onclick=async()=>{const c=await migrateOld(true);alert(`旧データ移行 ${c}件`);await refreshAll();};$('btnClearDb').onclick=async()=>{if(confirm('テストDBを消去しますか？')){await new Promise(res=>{const tx=db.transaction([STORE_TRIPS,STORE_META],'readwrite');tx.objectStore(STORE_TRIPS).clear();tx.objectStore(STORE_META).clear();tx.oncomplete=()=>res();});location.reload();}};$('searchBox').oninput=renderAllList;$('sortMode').onchange=renderAllList;document.addEventListener('click',ev=>{
+  const pd=ev.target.closest('[data-popup-trip-id]');
+  if(pd){
+    ev.preventDefault();ev.stopPropagation();
+    const box=pd.closest('.leaflet-popup-content');
+    showPopupTripDetail(pd.getAttribute('data-popup-group-id'),pd.getAttribute('data-popup-trip-id'),box);
+    return;
+  }
+
+  const pb=ev.target.closest('[data-popup-back-group-id]');
+  if(pb){
+    ev.preventDefault();ev.stopPropagation();
+    const box=pb.closest('.leaflet-popup-content');
+    showPopupDateList(pb.getAttribute('data-popup-back-group-id'),box);
+    return;
+  }
+
+  const ad=ev.target.closest('[data-all-date-trip-id]');
+  if(ad){
+    ev.preventDefault();ev.stopPropagation();
+    const id=ad.getAttribute('data-all-date-trip-id');
+    getAllTrips().then(trips=>{
+      const t=trips.find(x=>String(x.trip_id)===String(id));
+      if(!t)return;
+      selectedTripId=t.trip_id;
+      const panel=$('allHistoryDetailPanel');
+      if(panel){
+        panel.className='detail';
+        panel.innerHTML=`<div class="summaryBox"><h3>${esc(fmtTime(tms(t)))}　${esc(title(t))}</h3>${detailHtml(t,null)}</div>`;
+      }
+      document.querySelectorAll('[data-all-date-trip-id]').forEach(x=>x.classList.remove('selected'));
+      ad.classList.add('selected');
+    });
+    return;
+  }
+
+  const g=ev.target.closest('[data-group-id]');
+  if(g){
+    ev.preventDefault();
+    selectGroup(g.getAttribute('data-group-id'));
+    return;
+  }
+
+  const t=ev.target.closest('[data-trip-id]');
+  if(t){
+    ev.preventDefault();
+    selectTrip(t.getAttribute('data-trip-id'));
+  }
+});await initPwa();await refreshAll();const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng)))updatePosition(last);locate();}
 window.addEventListener('load',()=>init().catch(e=>{$('locStatus').textContent='初期化エラー: '+(e&&e.message?e.message:e);setBadge('locBadge','エラー','bad');}));
 
 
