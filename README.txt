@@ -1,18 +1,17 @@
-Wakasagi Map v11.8.4 STOP LOOP RESTORE
+Wakasagi Map v11.8.4 unique-entry
 
-目的:
-- まず地図表示を復旧する。
-- /log と map の無限往復を止める。
-- app-v1184.js / map-v1184.html / style-v1184.css を正常なHTML/JS/CSSへ戻す。
-- Pico Wスケッチは触らない。
-- GitHub側でFISH/sid/釣行開始は作らない。
+11.8.2のまま表示される問題への対策:
+- index.html / app.js のキャッシュ問題を避けるため、入口を map-v1184.html に変更。
+- JS/CSS/manifestも app-v1184.js / style-v1184.css / manifest-v1184.webmanifest に変更。
+- Service Workerは停止。
+- force-v1184.html から必ず map-v1184.html?v=1184 を開く。
 
-重要:
-- autolink=1 は受け取っても自動連携しない。
-- 連携が必要な時だけ「この地点を本体ログへ連携」を押す。
-- return_url から autolink を削除し、linked=1 を付けるので、戻ってきても再び/logへ飛ばない。
+仕様:
+- ピンをタップした直後は、その場所の過去釣行日だけを表示。
+- 見たい日付をタップすると、その釣行回の詳細を表示。
 
-アップロード:
-1. このフォルダ内のファイルを GitHub の wakasagi-companion へ上書きアップロード。
-2. 1〜2分待つ。
-3. https://ko-ki-m.github.io/wakasagi-companion/force-v1184.html を開く。
+更新:
+1. GitHub Pages上の既存ファイルを、このフォルダの全ファイルで上書き。
+2. Safariで https://ko-ki-m.github.io/wakasagi-companion/force-v1184.html を直接開く。
+3. 画面上部が Wakasagi Map v11.8.4 になっていることを確認。
+4. 今後Pico W側のWAKASAGI_MAP_URLは https://ko-ki-m.github.io/wakasagi-companion/map-v1184.html?v=1184 に固定。
