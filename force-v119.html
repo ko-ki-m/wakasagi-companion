@@ -4,11 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Wakasagi Map v11.9 Senior UI</title>
+  <style>
+    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;padding:24px;font-size:20px;line-height:1.6}
+    button{font-size:22px;min-height:60px;padding:12px 18px;border-radius:14px}
+  </style>
 </head>
 <body>
-  <p>Wakasagi Map v11.9 Senior UI を開いています...</p>
+  <h1>Wakasagi Map v11.9 Senior UI</h1>
+  <p>v11.9を開きます。</p>
+  <button id="openBtn">v11.9を開く</button>
   <script>
-    (function(){
+    function openMap(){
       const src = new URL(location.href);
       const dst = new URL("./map-v119.html", location.href);
       src.searchParams.forEach((v,k)=>dst.searchParams.set(k,v));
@@ -16,7 +22,9 @@
       dst.searchParams.set("force", String(Date.now()));
       dst.hash = src.hash || "";
       location.replace(dst.toString());
-    })();
+    }
+    document.getElementById("openBtn").addEventListener("click", openMap);
+    openMap();
   </script>
 </body>
 </html>

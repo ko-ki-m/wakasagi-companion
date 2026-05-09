@@ -1,24 +1,32 @@
-Wakasagi Map v11.8.4 FIX-20260509C
+Wakasagi Map v11.9 Senior UI 本番反映用
+
+このzipに含めるファイル:
+1. map-v119.html
+2. app-v119.js
+3. style-v119.css
+4. manifest-v119.webmanifest
+5. force-v119.html
+6. icon-192.png
+7. icon-512.png
+8. README.txt
+9. index.html
+10. manifest.webmanifest
+11. service-worker.js
+
+目的:
+- GitHub地図アプリを v11.9 Senior UI に更新する。
+- ピンをタップ → その場所の過去釣行日だけ表示。
+- 日付をタップ → その釣行回の詳細表示。
+- ?pico=...&autolink=1 のログ連携を行う。
+- return_url から autolink を削除して無限往復を防ぐ。
+- 古い Service Worker は service-worker.js で自己解除する。
+
+含めないもの:
+- v1184系ファイル
+- v1181/v1182系ファイル
+- Pico Wスケッチ
 
 反映確認:
-1. GitHubへこのzipの全ファイルを上書きアップロードする。
-2. rawで map-v1184.html を開き、Wakasagi Map v11.8.4 FIX-20260509C が見えることを確認する。
-3. rawで app-v1184.js を開き、先頭に WAKASAGI_FIX_20260509C が見えることを確認する。
-4. https://ko-ki-m.github.io/wakasagi-companion/force-v1184.html を開く。
-
-この版で直すこと:
-- 画面上部のバージョン表示を v11.8.4 FIX-20260509C に変える。
-- map-v1184.html をHTML構造へ戻す。
-- style-v1184.css を1行壊れ状態から復旧する。
-- ピンをタップすると、その場所の過去釣行日だけを表示する。
-- 日付をタップすると、その釣行回の詳細をポップアップ内と詳細欄に表示する。
-- ?pico=...&autolink=1 で開いた時、自動で現在地を /log#maplink=base64(JSON) へ渡す。
-- /log から戻った時、linked=1 または #logsync を検出し、「本体ログ: 連携済み」にする。
-- return_url から autolink を削除して無限往復を防ぐ。
-- 既存 service-worker.js は自己解除する内容で上書きする。
-
-触らないこと:
-- Pico Wスケッチ
-- FISH/sidの作成
-- TelemetryLogEntry
-- tlog_tick
+- 画面上部: Wakasagi Map v11.9 Senior UI
+- app-v119.js先頭: WAKASAGI_MAP_V119_SENIOR_FINAL_20260509
+- map-v119.html内: app-v119.js?v=v119_final_20260509
