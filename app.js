@@ -497,9 +497,18 @@ async function v112_applyLogSyncPayload(p){
     history.replaceState(null,document.title,location.pathname + location.search);
   }
   await refreshAll();
-  await selectTrip(t.trip_id);
+
+  // /log から戻った直後に selectTrip() を呼ぶと、内部で map.setView(...,18) が走り、
+  // 湖全体表示を上書きしてしまう。
+  // ここでは詳細データだけ更新し、地図は現在地+1km内ポイントの湖全体表示へ戻す。
+  try{
+    showTripDetail(t, {lat:Number(t.lat), lng:Number(t.lng)});
+  }catch(e){}
+  try{
+    fitInitialLakeViewOnce(true);
+  }catch(e){}
+
   v112_setLogSync('Pico Wログ要約を保存しました','good');
-  alert('Pico Wログ要約を地図アプリ側の過去釣行詳細へ保存しました。');
   return true;
 }
 async function v112_initLogSyncReceiver(){
