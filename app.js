@@ -112,7 +112,7 @@ function clearForm(){editingTripId=null;$('tripDate').value=toLocal(nowMs());['l
 function toLocal(ms){const d=new Date(Number(ms||nowMs()));return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}
 function openStd(a,b){window.open(`https://www.google.com/maps/search/?api=1&query=${Number(a).toFixed(7)},${Number(b).toFixed(7)}`,'_blank','noopener');}
 function fitAll(){if(!map)return;const pts=[];if(currentPos)pts.push([Number(currentPos.lat),Number(currentPos.lng)]);for(const g of groups)pts.push([g.lat,g.lng]);if(pts.length===0)return;if(pts.length===1)map.setView(pts[0],18);else map.fitBounds(L.latLngBounds(pts),{padding:[35,35],maxZoom:18});}
-function fitInitialLakeViewOnce(){if(initialLakeViewDone||!map)return;const pts=[];const nearLimitM=10000;if(currentPos&&validLatLng(Number(currentPos.lat),Number(currentPos.lng)))pts.push([Number(currentPos.lat),Number(currentPos.lng)]);for(const g of groups){if(currentPos&&validLatLng(Number(currentPos.lat),Number(currentPos.lng))){const d=dist(Number(currentPos.lat),Number(currentPos.lng),g.lat,g.lng);if(d<=nearLimitM)pts.push([g.lat,g.lng]);}else{pts.push([g.lat,g.lng]);}}if(pts.length===0)return;if(pts.length===1)map.setView(pts[0],13);else map.fitBounds(L.latLngBounds(pts),{padding:[45,45],maxZoom:13});initialLakeViewDone=true;}
+function fitInitialLakeViewOnce(){if(initialLakeViewDone||!map)return;const pts=[];const nearLimitM=10000;if(currentPos&&validLatLng(Number(currentPos.lat),Number(currentPos.lng)))pts.push([Number(currentPos.lat),Number(currentPos.lng)]);for(const g of groups){if(currentPos&&validLatLng(Number(currentPos.lat),Number(currentPos.lng))){const d=dist(Number(currentPos.lat),Number(currentPos.lng),g.lat,g.lng);if(d<=nearLimitM)pts.push([g.lat,g.lng]);}else{pts.push([g.lat,g.lng]);}}if(pts.length===0)return;if(pts.length===1)map.setView(pts[0],12);else map.fitBounds(L.latLngBounds(pts),{padding:[45,45],maxZoom:12});initialLakeViewDone=true;}
 function fitNear(){if(!map||!currentPos)return;const pts=[[Number(currentPos.lat),Number(currentPos.lng)]];for(const g of groups){if(g.distance_m!==null&&g.distance_m<=SAME_AREA_M)pts.push([g.lat,g.lng]);}if(pts.length===1)map.setView(pts[0],18);else map.fitBounds(L.latLngBounds(pts),{padding:[35,35],maxZoom:18});}
 function downloadBlob(n,t,x){const b=new Blob([x],{type:t});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}
 async function exportDb(){const trips=await getAllTrips();downloadBlob(`wakasagi_map_v10_${Date.now()}.json`,'application/json',JSON.stringify({version:'10',exported_ms:Date.now(),trips},null,2));}
@@ -169,7 +169,7 @@ $('btnLocate').onclick=locate;$('btnFitAll').onclick=fitAll;$('btnFitNear').oncl
     ev.preventDefault();
     selectTrip(t.getAttribute('data-trip-id'));
   }
-});await initPwa();await refreshAll();fitInitialLakeViewOnce();const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng)))updatePosition(last);locate();}
+});await initPwa();await refreshAll();const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng)))updatePosition(last);locate();}
 window.addEventListener('load',()=>init().catch(e=>{$('locStatus').textContent='初期化エラー: '+(e&&e.message?e.message:e);setBadge('locBadge','エラー','bad');}));
 
 
