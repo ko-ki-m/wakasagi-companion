@@ -90,7 +90,7 @@ async function renderAllList(){
     return;
   }
 
-  box.innerHTML=`<button id="btnHideAllHistory" type="button">全履歴を閉じる</button><div class="subhead">全履歴の日付一覧 <span class="chip">${trips.length}件</span></div><div id="allHistoryDateList" class="list"></div><div id="allHistoryDetailPanel" class="emptyBox">日付をタップすると詳細を表示します。</div>`;
+  box.innerHTML=`<button id="btnHideAllHistory" type="button">全履歴を閉じる</button><div class="subhead">全履歴の日付一覧 <span class="chip">${trips.length}件</span></div><div id="allHistoryDateList" class="list"></div>`;
   const hide=$('btnHideAllHistory');
   if(hide)hide.onclick=()=>{allHistoryExpanded=false;renderAllList();};
 
@@ -128,14 +128,6 @@ $('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitN
     return;
   }
 
-  const pb=ev.target.closest('[data-popup-back-group-id]');
-  if(pb){
-    ev.preventDefault();ev.stopPropagation();
-    const box=pb.closest('.leaflet-popup-content');
-    showPopupDateList(pb.getAttribute('data-popup-back-group-id'),box);
-    return;
-  }
-
   const ad=ev.target.closest('[data-all-date-trip-id]');
   if(ad){
     ev.preventDefault();ev.stopPropagation();
@@ -145,12 +137,8 @@ $('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitN
       if(!t)return;
       selectedTripId=t.trip_id;
       selectedGroupId=null;
-
-      // 全履歴の日付タップも、地図ポップアップ内や下の小枠ではなく、
-      // 画面の一番手前の詳細枠へ出す。
       showTripDetail(t,null);
       showFrontTripDetail(t,null);
-
       document.querySelectorAll('[data-all-date-trip-id]').forEach(x=>x.classList.remove('selected'));
       ad.classList.add('selected');
     });
@@ -497,18 +485,13 @@ async function v112_applyLogSyncPayload(p){
     history.replaceState(null,document.title,location.pathname + location.search);
   }
   await refreshAll();
-
-  // /log から戻った直後に selectTrip() を呼ぶと、内部で map.setView(...,18) が走り、
-  // 湖全体表示を上書きしてしまう。
-  // ここでは詳細データだけ更新し、地図は現在地+1km内ポイントの湖全体表示へ戻す。
   try{
-    showTripDetail(t, {lat:Number(t.lat), lng:Number(t.lng)});
+    showTripDetail(t,{lat:Number(t.lat),lng:Number(t.lng)});
   }catch(e){}
   try{
     fitInitialLakeViewOnce(true);
   }catch(e){}
-
-  v112_setLogSync('Pico Wログ要約を保存しました','good');
+  v112_setLogSync('同期済み','good');
   return true;
 }
 async function v112_initLogSyncReceiver(){
