@@ -142,11 +142,13 @@ $('btnLocate').onclick=locate;$('btnFitAll').onclick=fitAll;$('btnFitNear').oncl
       const t=trips.find(x=>String(x.trip_id)===String(id));
       if(!t)return;
       selectedTripId=t.trip_id;
-      const panel=$('allHistoryDetailPanel');
-      if(panel){
-        panel.className='detail';
-        panel.innerHTML=`<div class="summaryBox"><h3>${esc(fmtTime(tms(t)))}　${esc(title(t))}</h3>${detailHtml(t,null)}</div>`;
-      }
+      selectedGroupId=null;
+
+      // 全履歴の日付タップも、地図ポップアップ内や下の小枠ではなく、
+      // 画面の一番手前の詳細枠へ出す。
+      showTripDetail(t,null);
+      showFrontTripDetail(t,null);
+
       document.querySelectorAll('[data-all-date-trip-id]').forEach(x=>x.classList.remove('selected'));
       ad.classList.add('selected');
     });
