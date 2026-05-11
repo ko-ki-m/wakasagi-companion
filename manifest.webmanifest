@@ -1,7 +1,7 @@
 {
   "name": "Wakasagi Trip Viewer",
   "short_name": "Wakasagi Map",
-  "start_url": "./index.html?v=1184home20260511",
+  "start_url": "./map-v1184.html",
   "scope": "./",
   "display": "standalone",
   "background_color": "#07111f",
