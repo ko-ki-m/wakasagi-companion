@@ -6,111 +6,87 @@
   <meta name="theme-color" content="#07111f">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Wakasagi Map">
+  <meta name="google" content="notranslate">
   <meta name="format-detection" content="telephone=no">
-  <title>Wakasagi Trip Viewer</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=restore_self_20260511">
+  <title>Wakasagi Map v11.5</title>
+  <link rel="manifest" href="./manifest.webmanifest?v=115">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <style>
-    :root{
-      --bg:#07111f;--panel:#fff;--soft:#f1f5f9;--line:#d7dee9;--text:#0f172a;
-      --muted:#64748b;--blue:#0b84ff;--green:#16a34a;--red:#dc2626;--amber:#f59e0b;
-      --shadow:0 14px 36px rgba(15,23,42,.22);
-    }
-    *{box-sizing:border-box}
-    html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#e2e8f0;color:var(--text);-webkit-text-size-adjust:100%}
-    button,input,select{font:inherit}
-    button{appearance:none;border:1px solid #cbd5e1;border-radius:14px;min-height:44px;padding:10px 12px;background:#fff;color:#111827;font-size:14px;font-weight:900;cursor:pointer}
-    button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
-    button.good{background:var(--green);border-color:var(--green);color:#fff}
-    button:disabled{opacity:.45;cursor:not-allowed}
-    .topbar{position:sticky;top:0;z-index:1000;display:flex;justify-content:space-between;gap:10px;align-items:center;padding:10px 12px;background:rgba(7,17,31,.98);color:#fff;box-shadow:0 6px 20px rgba(0,0,0,.25)}
-    .version{font-size:11px;font-weight:900;color:#93c5fd;letter-spacing:.06em}
-    h1{margin:2px 0 0;font-size:20px;line-height:1.1}
-    h2{margin:0;font-size:18px}
-    h3{margin:12px 0 6px;font-size:16px}
-    p{margin:6px 0;color:var(--muted);font-size:13px;line-height:1.55}
-    .badge,.pill{display:inline-flex;align-items:center;justify-content:center;padding:4px 9px;border-radius:999px;background:#e0f2fe;color:#0369a1;font-size:12px;font-weight:900;white-space:nowrap}
-    .goodText{background:#dcfce7!important;color:#166534!important}.warnText{background:#fef3c7!important;color:#92400e!important}.badText{background:#fee2e2!important;color:#991b1b!important}
-    .mapArea{position:relative;background:#bfdbfe;min-height:calc(100vh - 58px)}
-    #map{width:100%;height:calc(100vh - 58px);min-height:520px;background:#dbeafe}
-    .mapPanel{position:absolute;left:8px;right:8px;z-index:700;background:rgba(255,255,255,.96);border:1px solid rgba(203,213,225,.9);border-radius:16px;padding:8px;box-shadow:0 8px 20px rgba(15,23,42,.18);backdrop-filter:blur(8px)}
-    .mapPanel.top{top:8px}
-    .mapPanel.bottom{bottom:8px;display:grid;grid-template-columns:70px 70px 1fr;gap:6px}
-    #mapStatus{font-size:12px;color:#334155;font-weight:800;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .mapButtons{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
-    .mapButtons button{min-height:38px;padding:7px 5px;font-size:12px;border-radius:12px}
-    .miniStat{border:1px solid var(--line);border-radius:14px;padding:6px;background:#fff;text-align:center}
-    .miniStat span{display:block;font-size:10px;color:var(--muted);font-weight:900}
-    .miniStat strong{display:block;margin-top:2px;font-size:16px;line-height:1.1}
-    .miniStat.wide{text-align:left}.miniStat.wide strong{font-size:12px;line-height:1.25}
-    .content{max-width:980px;margin:0 auto;padding:10px 10px 26px}
-    .card{background:rgba(255,255,255,.985);border:1px solid rgba(226,232,240,.95);border-radius:20px;padding:14px;margin:11px 0;box-shadow:var(--shadow)}
-    .cardHead{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
-    .tools{display:grid;grid-template-columns:1fr 160px;gap:9px;margin-top:11px}
-    input,select{width:100%;padding:10px 11px;border-radius:13px;border:1px solid #cbd5e1;background:#fff;color:#111827;font-size:15px}
-    .list{display:grid;gap:8px;margin-top:10px}
-    .item{border:1px solid var(--line);background:#fff;border-radius:15px;padding:10px}
-    .item .top{display:flex;justify-content:space-between;gap:10px;font-size:13px;font-weight:900}
-    .item .body{margin-top:5px;font-size:12px;color:#475569;line-height:1.45}
-    .item button{min-height:36px;margin-top:8px;padding:8px 11px;border-radius:12px;font-size:13px}
-    .emptyBox{color:#64748b;font-size:13px;margin-top:10px}
-    .detail{display:grid;gap:9px;margin-top:10px}
-    .summaryBox{background:#f8fafc;border:1px solid var(--line);border-radius:16px;padding:11px}
-    .kv{display:grid;grid-template-columns:120px 1fr;gap:6px;font-size:13px;line-height:1.45}
-    .kv b{color:#0f172a}
-    .cluster{display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:999px;background:var(--blue);color:#fff;border:3px solid #fff;box-shadow:0 3px 10px rgba(15,23,42,.38);font-weight:950;font-size:14px}
-    .cluster.selected{background:var(--red)}
-    .leaflet-control-zoom{margin-top:118px!important}
-    .leaflet-popup-content{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;line-height:1.45;min-width:220px}
-    .popupTitle{font-weight:950;margin-bottom:6px}
-    .dateBtn{display:block;width:100%;margin:6px 0;min-height:40px;border-radius:12px;background:#fff}
-    footer{text-align:center;color:#64748b;font-size:11px;line-height:1.55;margin:16px 0}
-    @media(max-width:620px){
-      #map{height:calc(100vh - 58px);min-height:520px}
-      .mapPanel.bottom{grid-template-columns:60px 60px 1fr}
-      .tools{grid-template-columns:1fr}
-      .mapButtons{grid-template-columns:1fr 1fr 1fr}
-      .mapButtons button{font-size:11px}
-      .kv{grid-template-columns:96px 1fr}
-    }
-  </style>
+  <link rel="stylesheet" href="./style.css?v=115">
 </head>
-<body>
+<body class="notranslate" translate="no">
+  <div id="picoFixedNav">
+    <button id="fixedPicoLog" type="button">LOGへ戻る</button>
+    <button id="fixedPicoRemote" type="button">操作パネルへ</button>
+    <span id="fixedPicoHost">Pico W: 確認中</span>
+  </div>
+
   <header class="topbar">
     <div>
-      <div class="version">Wakasagi Trip Viewer restore self-contained</div>
+      <div class="version">Wakasagi Map v11.5</div>
       <h1>過去釣行履歴マップ</h1>
     </div>
-    <span id="secureBadge" class="badge warnText">確認中</span>
+    <span id="secureBadge" class="badge warn">確認中</span>
   </header>
 
   <section class="mapArea">
     <div id="map"></div>
+
     <div class="mapPanel top">
       <div id="mapStatus">地図を準備しています...</div>
       <div class="mapButtons">
-        <button id="btnLocate" type="button" class="primary">現在地</button>
-        <button id="btnFitAll" type="button">全履歴</button>
-        <button id="btnReload" type="button">再読込</button>
+        <button id="btnLocate" class="primary">現在地</button>
+        <button id="btnFitAll" disabled>全履歴</button>
+        <button id="btnFitNear" disabled>周辺</button>
+        <button id="btnSaveScroll" class="good" disabled>保存</button>
       </div>
     </div>
+
     <div class="mapPanel bottom">
-      <div class="miniStat"><span>地点</span><strong id="totalGroups">-</strong></div>
-      <div class="miniStat"><span>履歴</span><strong id="totalTrips">-</strong></div>
+      <div class="miniStat"><span>全履歴</span><strong id="totalTrips">-</strong></div>
+      <div class="miniStat"><span>20m内</span><strong id="count20">-</strong></div>
+      <div class="miniStat"><span>100m内</span><strong id="count100">-</strong></div>
       <div class="miniStat wide"><span>選択</span><strong id="selectedMini">未選択</strong></div>
     </div>
   </section>
 
   <main class="content">
-    <section class="card">
+    <section class="card selectedCard">
       <div class="cardHead">
         <div>
           <h2>選択した釣行回の詳細</h2>
-          <p>地図の数字ピンをタップすると、まずその場所の釣行日だけを表示します。日付をタップすると詳細を表示します。</p>
+          <p id="selectedLead">地図の数字ピン、または下の全履歴から1回分を選ぶと詳細を表示します。</p>
         </div>
         <span id="selectedBadge" class="pill">未選択</span>
       </div>
-      <div id="selectedDetail" class="emptyBox">未選択</div>
+      <div id="selectedTripDetail" class="emptyBox">未選択</div>
+    </section>
+
+    <section class="card linkCard">
+      <div class="cardHead">
+        <div>
+          <h2>本体ログへ連携</h2>
+          <p>選択中の過去地点、または現在地をPico Wの現在sidへ渡します。ファイル書き出し/読み込みは使いません。</p>
+        </div>
+        <span id="linkBadge" class="pill">未連携</span>
+      </div>
+      <div class="tools">
+        <label>Pico W IP
+          <input id="picoIp" type="text" placeholder="192.168.4.1">
+        </label>
+        <button id="btnLinkToPico" class="primary" disabled>この地点を本体ログへ連携</button>
+      </div>
+      <p id="linkStatus" class="muted">地図ピンまたは履歴を選択すると、連携ボタンが使えます。未選択でも現在地取得済みなら現在地を連携できます。</p>
+    </section>
+
+    <section class="card">
+      <div class="cardHead">
+        <div>
+          <h2>選択ポイントの過去履歴</h2>
+          <p>地図ピンを選ぶと、その場所の20m以内すべての履歴と、100m以内の近辺履歴を表示します。</p>
+        </div>
+        <span id="pointBadge" class="pill">未選択</span>
+      </div>
+      <div id="pointHistoryPanel" class="emptyBox">未選択</div>
     </section>
 
     <section class="card">
@@ -119,462 +95,104 @@
           <h2>全過去釣行履歴</h2>
           <p id="dbView">読み込み中...</p>
         </div>
-        <span id="allBadge" class="pill">-</span>
+        <span id="groupView" class="pill">-</span>
       </div>
       <div class="tools">
         <input id="searchBox" type="search" placeholder="日付・湖名・ポイント名・メモ・ラインで検索">
         <select id="sortMode">
           <option value="date_desc">新しい順</option>
+          <option value="near">現在地から近い順</option>
           <option value="date_asc">古い順</option>
           <option value="name">湖名/ポイント名</option>
         </select>
       </div>
       <div id="allHistoryList" class="list"></div>
     </section>
+
+    <section class="card current">
+      <div class="cardHead">
+        <div>
+          <h2>現在地</h2>
+          <p id="locStatus">現在地を取得していません。</p>
+        </div>
+        <span id="locBadge" class="pill warn">未取得</span>
+      </div>
+      <div class="metrics">
+        <div><span>緯度</span><strong id="latView">-</strong></div>
+        <div><span>経度</span><strong id="lngView">-</strong></div>
+        <div><span>精度</span><strong id="accView">-</strong></div>
+        <div><span>時刻</span><strong id="timeView">-</strong></div>
+      </div>
+    </section>
+
+    <section class="card logSyncCard">
+      <div class="cardHead">
+        <div>
+          <h2>Pico Wログ要約</h2>
+          <p>本体ログから戻ってきたFISH数・MARK数・ログ数などを、選択した地点の過去釣行詳細へ反映します。</p>
+        </div>
+        <span id="logSyncBadge" class="pill">未同期</span>
+      </div>
+      <p id="logSyncStatus" class="muted">/log側から戻ると自動で保存・表示します。</p>
+    </section>
+
+    <section class="card autoLinkCard">
+      <div class="cardHead">
+        <div>
+          <h2>本体ログ自動連携</h2>
+          <p>/log または操作パネルから開いた場合、現在地取得後に現在sidへ自動連携して地図へ戻ります。</p>
+        </div>
+        <span id="autoLinkBadge" class="pill">待機</span>
+      </div>
+      <p id="autoLinkStatus" class="muted">通常起動時は自動連携しません。</p>
+    </section>
+
+    <section class="card hiddenNormal">
+      <div class="cardHead">
+        <div>
+          <h2>現在地を釣行履歴として保存</h2>
+          <p>現在地を1回分の過去釣行として保存します。保存後は全履歴一覧と地図へ即反映されます。</p>
+        </div>
+        <span id="saveBadge" class="pill">待機中</span>
+      </div>
+      <div class="form">
+        <label>釣行日時<input id="tripDate" type="datetime-local"></label>
+        <label>湖名<input id="lakeName" type="text" placeholder="例：野尻湖"></label>
+        <label>ポイント名<input id="pointName" type="text" placeholder="例：弁天島沖"></label>
+        <label>ライン<input id="lineNo" type="text" placeholder="例：0.2"></label>
+        <label>シンカー(g)<input id="sinkerG" type="number" step="0.1" placeholder="例：15"></label>
+        <label>魚探水深(m)<input id="fishfinderDepthM" type="number" step="0.1" placeholder="例：35.2"></label>
+        <label>水温(℃)<input id="waterTempC" type="number" step="0.1" placeholder="例：4.2"></label>
+        <label>天気<input id="weather" type="text" placeholder="例：曇り"></label>
+        <label>風<input id="wind" type="text" placeholder="例：北 3m"></label>
+        <label class="full">メモ<textarea id="memo" placeholder="釣れた深度、魚探反応、仕掛け、誘い/SP、群れ、釣果など"></textarea></label>
+      </div>
+      <div class="actions">
+        <button id="btnSaveTrip" class="good" disabled>現在地を過去履歴として保存</button>
+        <button id="btnLoadSelected" disabled>選択履歴を入力欄へ</button>
+        <button id="btnUpdateTrip" disabled>選択履歴を上書き</button>
+        <button id="btnClearForm">入力欄クリア</button>
+      </div>
+    </section>
+
+    <section class="card maintenance">
+      <h2>データ保護</h2>
+      <p>通常使用では触る必要はありません。端末変更・バックアップ用です。</p>
+      <div class="actions">
+        <button id="btnExport" class="dark">バックアップを書き出し</button>
+        <button id="btnImport">バックアップを読み込み</button>
+        <button id="btnMigrate">旧V5/V7データを再移行</button>
+        <button id="btnClearDb" class="danger">テストDB消去</button>
+      </div>
+      <input id="importFile" type="file" accept="application/json,.json" hidden>
+    </section>
+
+    <footer>
+      v11: 全過去履歴を常時表示し、地図ピンまたは履歴1件の選択で、選択した釣行回の詳細を必ず表示します。Pico W本体ログ・sid・FISHは作りません。
+    </footer>
   </main>
 
-  <footer>この復旧版は index.html 単体で動作します。map-v1184.html へリダイレクトしません。</footer>
-
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script>
-  (function(){
-    'use strict';
-
-    const DB_NAME = 'wakasagi_trip_map_v10';
-    const DB_VER = 1;
-    const STORE_TRIPS = 'trip_records';
-    const STORE_META = 'meta';
-    const OLD_DB_NAME = 'wakasa_companion_v2';
-    const OLD_STORE_SPOTS = 'fishing_spots';
-    const SAME_POINT_M = 20;
-    const DEFAULT_CENTER = [36.2048, 138.2529];
-
-    let db = null;
-    let map = null;
-    let groupLayer = null;
-    let currentPos = null;
-    let currentMarker = null;
-    let groups = [];
-    let allTrips = [];
-    let selectedTripId = null;
-
-    const $ = (id) => document.getElementById(id);
-
-    function esc(v){
-      return String(v == null ? '' : v).replace(/[&<>"']/g, function(m){
-        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
-      });
-    }
-    function pad(n){ return String(n).padStart(2,'0'); }
-    function toNum(v){ const n = Number(v); return Number.isFinite(n) ? n : 0; }
-    function nowMs(){ return Date.now(); }
-    function fmtDate(ms){
-      const n = Number(ms || 0);
-      if(!n) return '-';
-      const d = new Date(n);
-      if(Number.isNaN(d.getTime())) return '-';
-      return d.getFullYear() + '/' + pad(d.getMonth()+1) + '/' + pad(d.getDate());
-    }
-    function fmtDateTime(ms){
-      const n = Number(ms || 0);
-      if(!n) return '-';
-      const d = new Date(n);
-      if(Number.isNaN(d.getTime())) return '-';
-      return fmtDate(n) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-    }
-    function validLatLng(lat,lng){
-      return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
-    }
-    function dist(lat1,lng1,lat2,lng2){
-      const R = 6371008.8;
-      const r = (v) => v * Math.PI / 180;
-      const p1 = r(lat1), p2 = r(lat2), dp = r(lat2-lat1), dl = r(lng2-lng1);
-      const a = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
-      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    }
-    function lat(t){ return Number(t.lat); }
-    function lng(t){ return Number(t.lng); }
-    function tms(t){ return Number(t.date_ms || t.start_ms || t.created_ms || t.location_time_ms || 0); }
-    function title(t){ return t.point_name || t.pointName || t.lake_name || t.lakeName || '釣行地点'; }
-
-    function setText(id, text){
-      const el = $(id);
-      if(el) el.textContent = text;
-    }
-    function setBadge(id, text, cls){
-      const el = $(id);
-      if(!el) return;
-      el.textContent = text;
-      el.className = 'pill ' + (cls || '');
-    }
-
-    function openDb(){
-      return new Promise(function(resolve, reject){
-        const req = indexedDB.open(DB_NAME, DB_VER);
-        req.onupgradeneeded = function(){
-          const d = req.result;
-          if(!d.objectStoreNames.contains(STORE_TRIPS)){
-            const st = d.createObjectStore(STORE_TRIPS, {keyPath:'trip_id'});
-            st.createIndex('date_ms','date_ms',{unique:false});
-          }
-          if(!d.objectStoreNames.contains(STORE_META)){
-            d.createObjectStore(STORE_META, {keyPath:'key'});
-          }
-        };
-        req.onsuccess = function(){ resolve(req.result); };
-        req.onerror = function(){ reject(req.error); };
-      });
-    }
-
-    function getAllTrips(){
-      return new Promise(function(resolve){
-        if(!db || !db.objectStoreNames.contains(STORE_TRIPS)){
-          resolve([]);
-          return;
-        }
-        const tx = db.transaction(STORE_TRIPS, 'readonly');
-        const req = tx.objectStore(STORE_TRIPS).getAll();
-        req.onsuccess = function(){ resolve(req.result || []); };
-        req.onerror = function(){ resolve([]); };
-      });
-    }
-
-    function putTrip(t){
-      return new Promise(function(resolve){
-        const tx = db.transaction(STORE_TRIPS, 'readwrite');
-        tx.objectStore(STORE_TRIPS).put(t);
-        tx.oncomplete = function(){ resolve(true); };
-        tx.onerror = function(){ resolve(false); };
-      });
-    }
-
-    function normalizeOld(s){
-      const a = Number(s.lat);
-      const b = Number(s.lng);
-      if(!validLatLng(a,b)) return null;
-      return {
-        trip_id: s.trip_id || s.spot_id || ('T' + Date.now().toString(36) + Math.random().toString(16).slice(2)),
-        migrated_from: s.spot_id || '',
-        date_ms: Number(s.start_ms || s.date_ms || s.created_ms || nowMs()),
-        lat: a,
-        lng: b,
-        accuracy_m: Number(s.accuracy_m || 0),
-        location_time_ms: Number(s.location_time_ms || s.start_ms || nowMs()),
-        lake_name: s.lake_name || '',
-        point_name: s.point_name || '',
-        line_no: s.line_no || '',
-        sinker_g: s.sinker_g || '',
-        fishfinder_depth_m: s.fishfinder_depth_m || s.fishfinder_m || '',
-        water_temp_c: s.water_temp_c || '',
-        weather: s.weather || '',
-        wind: s.wind || '',
-        memo: s.memo || '',
-        created_ms: Number(s.created_ms || s.start_ms || nowMs()),
-        updated_ms: Number(s.updated_ms || s.start_ms || nowMs())
-      };
-    }
-
-    async function migrateOld(){
-      try{
-        const old = await new Promise(function(resolve){
-          const r = indexedDB.open(OLD_DB_NAME);
-          r.onsuccess = function(){ resolve(r.result); };
-          r.onerror = function(){ resolve(null); };
-          r.onblocked = function(){ resolve(null); };
-        });
-        if(!old || !old.objectStoreNames.contains(OLD_STORE_SPOTS)) return 0;
-        const rows = await new Promise(function(resolve){
-          const r = old.transaction(OLD_STORE_SPOTS, 'readonly').objectStore(OLD_STORE_SPOTS).getAll();
-          r.onsuccess = function(){ resolve(r.result || []); };
-          r.onerror = function(){ resolve([]); };
-        });
-        const current = await getAllTrips();
-        const exists = new Set(current.map(function(x){ return String(x.migrated_from || x.trip_id || ''); }));
-        let count = 0;
-        for(const row of rows){
-          const t = normalizeOld(row);
-          if(!t) continue;
-          const key = String(t.migrated_from || t.trip_id || '');
-          if(exists.has(key)) continue;
-          await putTrip(t);
-          count++;
-        }
-        return count;
-      }catch(e){
-        return 0;
-      }
-    }
-
-    function ensureMap(){
-      if(map) return true;
-      if(!window.L){
-        setText('mapStatus', '地図ライブラリを読めません。下の全履歴は表示できます。');
-        return false;
-      }
-      map = L.map('map', {zoomControl:true}).setView(DEFAULT_CENTER, 5);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '© OpenStreetMap contributors'
-      }).addTo(map);
-      groupLayer = L.layerGroup().addTo(map);
-      setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} }, 100);
-      setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} }, 700);
-      return true;
-    }
-
-    function makeGroups(trips){
-      const valid = trips.filter(function(t){
-        return validLatLng(lat(t), lng(t));
-      }).slice().sort(function(a,b){ return tms(b) - tms(a); });
-
-      const gs = [];
-      valid.forEach(function(t){
-        let best = null;
-        let bd = Infinity;
-        gs.forEach(function(g){
-          const d = dist(lat(t), lng(t), g.lat, g.lng);
-          if(d <= SAME_POINT_M && d < bd){
-            best = g;
-            bd = d;
-          }
-        });
-        if(!best){
-          best = {
-            group_id: 'G' + gs.length,
-            lat: lat(t),
-            lng: lng(t),
-            trips: []
-          };
-          gs.push(best);
-        }
-        best.trips.push(t);
-        const n = best.trips.length;
-        best.lat = (best.lat * (n - 1) + lat(t)) / n;
-        best.lng = (best.lng * (n - 1) + lng(t)) / n;
-      });
-
-      gs.forEach(function(g){
-        g.trips.sort(function(a,b){ return tms(b) - tms(a); });
-        g.latest = g.trips[0];
-        g.count = g.trips.length;
-        g.latest_ms = tms(g.latest);
-      });
-
-      gs.sort(function(a,b){ return b.latest_ms - a.latest_ms; });
-      return gs;
-    }
-
-    function popupHtml(g){
-      const dates = g.trips.slice().sort(function(a,b){ return tms(b) - tms(a); }).map(function(t){
-        const id = esc(String(t.trip_id || ''));
-        return '<button type="button" class="dateBtn" onclick="window.wakasagiOpenTrip(\'' + id + '\')">' + esc(fmtDate(tms(t))) + '</button>';
-      }).join('');
-      return '<div class="popupTitle">この地点の過去 ' + esc(g.count) + '回</div>' +
-             '<div class="popupMeta">見たい日付を選択してください。</div>' +
-             (dates || '<p>履歴がありません。</p>');
-    }
-
-    function drawMap(){
-      ensureMap();
-      if(!groupLayer) return;
-      groupLayer.clearLayers();
-
-      groups.forEach(function(g){
-        const icon = L.divIcon({
-          className: '',
-          html: '<div class="cluster' + (selectedTripId && g.trips.some(function(t){return t.trip_id === selectedTripId;}) ? ' selected' : '') + '">' + esc(g.count) + '</div>',
-          iconSize: [38,38],
-          iconAnchor: [19,19],
-          popupAnchor: [0,-18]
-        });
-        L.marker([g.lat, g.lng], {icon: icon}).addTo(groupLayer).bindPopup(popupHtml(g));
-      });
-
-      setText('totalGroups', String(groups.length));
-      setText('totalTrips', String(allTrips.length));
-      setText('mapStatus', allTrips.length ? '過去釣行履歴を表示中' : '保存済みの過去釣行履歴がありません');
-    }
-
-    function fitAll(){
-      if(!map || !groups.length) return;
-      const bounds = L.latLngBounds(groups.map(function(g){ return [g.lat, g.lng]; }));
-      map.fitBounds(bounds.pad(0.25), {maxZoom: 14});
-    }
-
-    function locate(){
-      if(!navigator.geolocation){
-        setText('mapStatus', 'この端末は現在地取得に対応していません');
-        return;
-      }
-      setText('mapStatus', '現在地を取得しています...');
-      navigator.geolocation.getCurrentPosition(function(pos){
-        const c = pos.coords;
-        currentPos = {lat:Number(c.latitude), lng:Number(c.longitude), acc:Number(c.accuracy || 0)};
-        if(ensureMap()){
-          if(currentMarker) currentMarker.remove();
-          currentMarker = L.marker([currentPos.lat, currentPos.lng]).addTo(map).bindPopup('現在地');
-          map.setView([currentPos.lat, currentPos.lng], 17);
-        }
-        setText('mapStatus', '現在地を表示しました');
-      }, function(e){
-        setText('mapStatus', '現在地を取得できません: ' + (e && e.message ? e.message : ''));
-      }, {enableHighAccuracy:true, timeout:15000, maximumAge:10000});
-    }
-
-    function flatText(v){
-      if(v == null || v === '') return '-';
-      if(Array.isArray(v)) return v.join(', ');
-      if(typeof v === 'object') return JSON.stringify(v);
-      return String(v);
-    }
-
-    function picoSummaryHtml(t){
-      const s = t.pico_summary || t.pico_log_summary || t.log_summary || {};
-      const logs = t.pico_logs || t.logs || [];
-      const fields = [];
-
-      function pick(names){
-        for(const n of names){
-          if(s && s[n] != null && s[n] !== '') return s[n];
-          if(t && t[n] != null && t[n] !== '') return t[n];
-        }
-        return '';
-      }
-
-      const fish = pick(['fish_count','fish','fishCount','FISH']);
-      const mark = pick(['mark_count','mark','markCount','MARK']);
-      const logCount = pick(['log_count','logs_count','count','sample_count']);
-      const seqMin = pick(['seq_min','seqStart','seq_start']);
-      const seqMax = pick(['seq_max','seqEnd','seq_end']);
-      const depthMin = pick(['depth_min_m','depthMinM','min_depth_m','depth_min']);
-      const depthMax = pick(['depth_max_m','depthMaxM','max_depth_m','depth_max']);
-      const speeds = pick(['speeds','speed_levels','speedLevel','used_speeds']);
-      const sasoi = pick(['sasoi','sasoi_types','sasoiType','used_sasoi']);
-
-      if(fish !== '') fields.push(['FISH数', fish]);
-      if(mark !== '') fields.push(['MARK数', mark]);
-      if(logCount !== '') fields.push(['ログ数', logCount]);
-      if(seqMin !== '' || seqMax !== '') fields.push(['seq範囲', flatText(seqMin) + ' - ' + flatText(seqMax)]);
-      if(depthMin !== '' || depthMax !== '') fields.push(['深度範囲', flatText(depthMin) + ' - ' + flatText(depthMax)]);
-      if(speeds !== '') fields.push(['使用速度', speeds]);
-      if(sasoi !== '') fields.push(['使用誘い', sasoi]);
-      if(Array.isArray(logs) && logs.length && logCount === '') fields.push(['ログ数', logs.length]);
-
-      if(!fields.length) return '<div class="summaryBox"><h3>保存済みPico Wログ要約</h3><p>保存済みログ要約はありません。</p></div>';
-
-      return '<div class="summaryBox"><h3>保存済みPico Wログ要約</h3><div class="kv">' +
-        fields.map(function(p){ return '<b>' + esc(p[0]) + '</b><span>' + esc(flatText(p[1])) + '</span>'; }).join('') +
-        '</div></div>';
-    }
-
-    function detailHtml(t){
-      return '<div class="detail">' +
-        '<div class="summaryBox"><div class="kv">' +
-        '<b>日付</b><span>' + esc(fmtDateTime(tms(t))) + '</span>' +
-        '<b>湖名</b><span>' + esc(t.lake_name || t.lakeName || '-') + '</span>' +
-        '<b>ポイント名</b><span>' + esc(t.point_name || t.pointName || '-') + '</span>' +
-        '<b>座標</b><span>' + esc(lat(t).toFixed(7)) + ', ' + esc(lng(t).toFixed(7)) + '</span>' +
-        '<b>ライン</b><span>' + esc(t.line_no || t.line || '-') + '</span>' +
-        '<b>シンカー</b><span>' + esc(t.sinker_g || t.sinker || '-') + ' g</span>' +
-        '<b>魚探水深</b><span>' + esc(t.fishfinder_depth_m || t.fishfinder_m || '-') + ' m</span>' +
-        '<b>水温</b><span>' + esc(t.water_temp_c || '-') + ' ℃</span>' +
-        '<b>天気</b><span>' + esc(t.weather || '-') + '</span>' +
-        '<b>風</b><span>' + esc(t.wind || '-') + '</span>' +
-        '<b>メモ</b><span>' + esc(t.memo || '-') + '</span>' +
-        '</div></div>' +
-        picoSummaryHtml(t) +
-        '</div>';
-    }
-
-    function showTrip(id){
-      const t = allTrips.find(function(x){ return String(x.trip_id) === String(id); });
-      if(!t) return;
-      selectedTripId = t.trip_id;
-      setText('selectedMini', fmtDate(tms(t)) + ' ' + title(t));
-      setBadge('selectedBadge', '詳細表示中', 'goodText');
-      $('selectedDetail').className = 'detail';
-      $('selectedDetail').innerHTML = detailHtml(t);
-      drawMap();
-      if(map && validLatLng(lat(t),lng(t))){
-        map.setView([lat(t), lng(t)], 17);
-      }
-    }
-
-    function listItemHtml(t){
-      return '<div class="item">' +
-        '<div class="top"><span>' + esc(title(t)) + '</span><span>' + esc(fmtDate(tms(t))) + '</span></div>' +
-        '<div class="body">ライン ' + esc(t.line_no || '-') +
-        ' / シンカー ' + esc(t.sinker_g || '-') + 'g' +
-        ' / 魚探 ' + esc(t.fishfinder_depth_m || '-') + 'm' +
-        ' / 水温 ' + esc(t.water_temp_c || '-') + '℃' +
-        '<br>' + esc(t.memo || '') + '</div>' +
-        '<button type="button" onclick="window.wakasagiOpenTrip(\'' + esc(String(t.trip_id || '')) + '\')">この釣行回を表示</button>' +
-        '</div>';
-    }
-
-    function renderList(){
-      const q = ($('searchBox').value || '').trim().toLowerCase();
-      const mode = $('sortMode').value || 'date_desc';
-      let rows = allTrips.slice();
-
-      if(q){
-        rows = rows.filter(function(t){
-          const s = [
-            fmtDateTime(tms(t)), title(t), t.lake_name, t.point_name, t.memo,
-            t.line_no, t.sinker_g, t.fishfinder_depth_m, t.water_temp_c, t.weather, t.wind
-          ].join(' ').toLowerCase();
-          return s.indexOf(q) >= 0;
-        });
-      }
-
-      rows.sort(function(a,b){
-        if(mode === 'date_asc') return tms(a) - tms(b);
-        if(mode === 'name') return title(a).localeCompare(title(b), 'ja');
-        return tms(b) - tms(a);
-      });
-
-      setText('dbView', '保存済み ' + allTrips.length + '件 / 表示 ' + rows.length + '件');
-      setBadge('allBadge', String(rows.length), '');
-      $('allHistoryList').innerHTML = rows.length ? rows.map(listItemHtml).join('') : '<div class="emptyBox">表示できる履歴がありません。</div>';
-    }
-
-    async function reload(){
-      try{
-        if(!db) db = await openDb();
-        await migrateOld();
-        allTrips = (await getAllTrips()).filter(function(t){ return validLatLng(lat(t), lng(t)); });
-        groups = makeGroups(allTrips);
-        drawMap();
-        renderList();
-        if(groups.length) fitAll();
-      }catch(e){
-        setText('mapStatus', '読み込みエラー: ' + (e && e.message ? e.message : e));
-        $('allHistoryList').innerHTML = '<div class="emptyBox">IndexedDBを読めませんでした。</div>';
-      }
-    }
-
-    async function init(){
-      $('secureBadge').textContent = window.isSecureContext ? 'HTTPS' : '注意';
-      $('secureBadge').className = 'badge ' + (window.isSecureContext ? 'goodText' : 'warnText');
-
-      window.wakasagiOpenTrip = showTrip;
-
-      $('btnLocate').addEventListener('click', locate);
-      $('btnFitAll').addEventListener('click', fitAll);
-      $('btnReload').addEventListener('click', reload);
-      $('searchBox').addEventListener('input', renderList);
-      $('sortMode').addEventListener('change', renderList);
-
-      ensureMap();
-      await reload();
-    }
-
-    if(document.readyState === 'loading'){
-      document.addEventListener('DOMContentLoaded', init);
-    }else{
-      init();
-    }
-  })();
-  </script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <script src="./app.js?v=115" defer></script>
 </body>
 </html>
