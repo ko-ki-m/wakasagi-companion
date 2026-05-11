@@ -1,1 +1,97 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#07111f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Wakasagi Viewer">
+  <meta name="format-detection" content="telephone=no">
+  <title>Wakasagi Trip Viewer</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="appHeader">
+    <div>
+      <div class="version">Wakasagi Trip Viewer</div>
+      <h1>過去釣行閲覧</h1>
+    </div>
+    <span id="dbBadge" class="badge">読込中</span>
+  </header>
 
+  <main class="app">
+    <section class="card intro">
+      <h2>釣行日から探す</h2>
+      <p>
+        このアプリは、Pico W本体OFF時に過去釣行を閲覧するための専用入口です。
+        本体ログ連携、Pico W IP、/log、/remote、autolink は表示しません。
+      </p>
+    </section>
+
+    <section class="card controls">
+      <div class="controlGrid">
+        <label>
+          検索
+          <input id="searchBox" type="search" placeholder="日付・湖名・ポイント名・メモ・ライン">
+        </label>
+        <label>
+          並び替え
+          <select id="sortMode">
+            <option value="date_desc">新しい順</option>
+            <option value="date_asc">古い順</option>
+            <option value="name">湖名 / ポイント名</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="btnReload" type="button">再読込</button>
+        <button id="btnShowMapList" type="button">地図から探す</button>
+      </div>
+      <p id="statusText" class="status">保存済みデータを読み込んでいます。</p>
+    </section>
+
+    <section class="card">
+      <div class="cardHead">
+        <div>
+          <h2>過去釣行日一覧</h2>
+          <p>見たい釣行日を選ぶと、その日の詳細と場所の地図を表示します。</p>
+        </div>
+        <span id="countBadge" class="pill">-</span>
+      </div>
+      <div id="tripList" class="tripList empty">読込中...</div>
+    </section>
+
+    <section id="detailCard" class="card detailCard hidden">
+      <div class="cardHead">
+        <div>
+          <h2>選択した釣行</h2>
+          <p id="detailLead">日付一覧から選択してください。</p>
+        </div>
+        <span id="detailBadge" class="pill">未選択</span>
+      </div>
+      <div id="detailBox" class="detailBox"></div>
+    </section>
+
+    <section id="mapCard" class="card mapCard hidden">
+      <div class="cardHead">
+        <div>
+          <h2>釣行場所の地図</h2>
+          <p>選択した釣行地点を中心に表示します。</p>
+        </div>
+        <span id="mapBadge" class="pill">未表示</span>
+      </div>
+      <div id="map"></div>
+      <div id="relatedBox" class="relatedBox"></div>
+    </section>
+  </main>
+
+  <footer>
+    viewer専用入口。既存の本体連携用 index.html / app.js / style.css は使用しません。
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
