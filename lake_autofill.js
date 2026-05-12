@@ -1,14 +1,13 @@
 /*
   wakasagi-companion / lake_autofill.js
-  修正版: 2026-05-12
+  修正版: 2026-05-12 lake-name repair 版
 
   目的:
-    1) Pico W /log から戻った #logsync 保存時、lake_name が空なら viewer/lakes の全国湖沼JSONから補完する。
-    2) 重要修正: #logsync の保存先選定で、過去地点(map_spot_id)へ統合して回数が増えない問題を止める。
-       - map_spot_id は「連携元の地点ID」であり、「今回の新規釣行回の保存先ID」ではない。
-       - 同じ sid が既に保存済みの場合だけ既存レコードを更新する。
-       - 初回の #logsync では必ず新しい trip_records を作らせる。
+    1) Pico W /log から戻った #logsync 保存時、lake_name が空なら補完する。
+    2) #logsync の保存先選定で、過去地点(map_spot_id)へ統合して回数が増えない問題を止める。
     3) GitHub -> Pico W へ渡す maplink payload に、同地点20m以内の過去回数/今日回数を付加する。
+    4) 既に保存済みで lake_name が空の trip_records も、同じChrome内で補修する。
+    5) viewer/lakes の全国湖沼JSONが読めない場合でも、主要ワカサギ湖の内蔵フォールバックで補完する。
 
   守ること:
     - app.js 本体は改造しない。
@@ -19,10 +18,10 @@
 (function(){
   'use strict';
 
-  const INSTALL_FLAG = '__wakasagiLakeAutofillLogsync20260512FixedInstalled';
-  const APPLY_WRAP_FLAG = '__wakasagiLakeAutofillLogsyncWrappedFixed';
-  const MAPLINK_WRAP_FLAG = '__wakasagiMaplinkHistoryCountsWrapped20260512';
-  const FIND_FIX_FLAG = '__wakasagiLogsyncFindTripFixed20260512';
+  const INSTALL_FLAG = '__wakasagiLakeAutofillLogsync20260512LakeRepairInstalled';
+  const APPLY_WRAP_FLAG = '__wakasagiLakeAutofillLogsyncWrappedLakeRepair';
+  const MAPLINK_WRAP_FLAG = '__wakasagiMaplinkHistoryCountsWrappedLakeRepair20260512';
+  const FIND_FIX_FLAG = '__wakasagiLogsyncFindTripLakeRepair20260512';
 
   const INDEX_URL = './viewer/lakes/index.json';
   const PREF_BASE_URL = './viewer/lakes/';
@@ -30,6 +29,32 @@
   const NEAR_LIMIT_M = 500;
   const SAME_POINT_M = 20;
   const SAME_AREA_M = 100;
+
+  const DB_NAME = 'wakasagi_trip_map_v10';
+  const STORE_TRIPS = 'trip_records';
+
+  // viewer/lakes が未読込・圏外・Pico W Wi-Fi中で外部JSONを読めない場合の最後の保険。
+  // W09ポリゴン判定を最優先し、それが失敗した場合だけ使う。
+  const BUILTIN_LAKE_FALLBACKS = [
+    {name:'野尻湖', lat:36.8325, lng:138.2096, radius_m:3800},
+    {name:'諏訪湖', lat:36.0474, lng:138.0835, radius_m:5200},
+    {name:'桧原湖', lat:37.6860, lng:140.0600, radius_m:8500},
+    {name:'山中湖', lat:35.4180, lng:138.8790, radius_m:5200},
+    {name:'河口湖', lat:35.5158, lng:138.7550, radius_m:6500},
+    {name:'西湖', lat:35.5008, lng:138.6847, radius_m:3600},
+    {name:'精進湖', lat:35.4934, lng:138.6117, radius_m:2600},
+    {name:'本栖湖', lat:35.4627, lng:138.5838, radius_m:5200},
+    {name:'榛名湖', lat:36.4767, lng:138.8752, radius_m:3000},
+    {name:'木崎湖', lat:36.5562, lng:137.8340, radius_m:3800},
+    {name:'松原湖', lat:36.0530, lng:138.4650, radius_m:1700},
+    {name:'中禅寺湖', lat:36.7407, lng:139.4600, radius_m:9500},
+    {name:'芦ノ湖', lat:35.2078, lng:139.0019, radius_m:8500},
+    {name:'余呉湖', lat:35.5286, lng:136.1902, radius_m:3000},
+    {name:'朱鞠内湖', lat:44.3050, lng:142.1600, radius_m:13000},
+    {name:'網走湖', lat:43.9800, lng:144.1650, radius_m:10000},
+    {name:'阿寒湖', lat:43.4500, lng:144.1000, radius_m:9000},
+    {name:'赤城大沼', lat:36.5453, lng:139.1848, radius_m:2600}
+  ];
 
   if(window[INSTALL_FLAG]) return;
   window[INSTALL_FLAG] = true;
@@ -132,9 +157,19 @@
   }
 
   async function loadJson(url){
-    const res = await fetch(url, { cache: 'force-cache' });
-    if(!res.ok) throw new Error(url + ' load failed: ' + res.status);
-    return await res.json();
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => {
+      try{ ctrl.abort(); }catch(e){}
+    }, 2500) : null;
+
+    try{
+      const opt = ctrl ? { cache: 'force-cache', signal: ctrl.signal } : { cache: 'force-cache' };
+      const res = await fetch(url, opt);
+      if(!res.ok) throw new Error(url + ' load failed: ' + res.status);
+      return await res.json();
+    }finally{
+      if(timer) clearTimeout(timer);
+    }
   }
 
   async function loadLakeIndex(){
@@ -225,54 +260,81 @@
     return best;
   }
 
-  async function guessLakeNameFromLatLng(lat, lng){
+  function guessLakeNameBuiltIn(lat, lng){
     if(!validLatLng(lat, lng)) return null;
 
-    const indexRows = await loadLakeIndex();
-    const indexCandidates = indexRows.filter(row => {
-      const f = lakeFile(row);
-      const b = lakeBbox(row);
-      return f && b && inBbox(lng, lat, b, BBOX_MARGIN_DEG);
-    });
-
-    const files = [...new Set(indexCandidates.map(lakeFile).filter(Boolean))];
-    if(!files.length) return null;
-
-    let nearest = null;
-
-    for(const file of files){
-      const lakes = await loadLakePrefFile(file);
-      for(const lake of lakes){
-        const name = lakeName(lake);
-        const geom = lakeGeometry(lake);
-        if(!name || !geom) continue;
-
-        const b = lakeBbox(lake);
-        if(b && !inBbox(lng, lat, b, BBOX_MARGIN_DEG)) continue;
-
-        if(pointInGeometry(lng, lat, geom)){
-          return {
-            lake_name: name,
-            lake_source: 'ksj_w09_polygon',
-            lake_confidence: 1.0
+    let best = null;
+    for(const lake of BUILTIN_LAKE_FALLBACKS){
+      const d = distMeters(lat, lng, lake.lat, lake.lng);
+      if(Number.isFinite(d) && d <= lake.radius_m){
+        if(!best || d < best.distance_m){
+          best = {
+            lake_name: lake.name,
+            lake_source: 'builtin_wakasagi_lake_fallback',
+            lake_confidence: 0.55,
+            distance_m: d
           };
-        }
-
-        const d = geometryDistanceMeters(lat, lng, geom);
-        if(Number.isFinite(d) && d <= NEAR_LIMIT_M){
-          if(!nearest || d < nearest.distance_m){
-            nearest = {
-              lake_name: name,
-              lake_source: 'ksj_w09_near',
-              lake_confidence: 0.7,
-              distance_m: d
-            };
-          }
         }
       }
     }
+    return best;
+  }
 
-    return nearest;
+  async function guessLakeNameFromLatLng(lat, lng){
+    if(!validLatLng(lat, lng)) return null;
+
+    const fallback = guessLakeNameBuiltIn(lat, lng);
+
+    try{
+      const indexRows = await loadLakeIndex();
+      const indexCandidates = indexRows.filter(row => {
+        const f = lakeFile(row);
+        const b = lakeBbox(row);
+        return f && b && inBbox(lng, lat, b, BBOX_MARGIN_DEG);
+      });
+
+      const files = [...new Set(indexCandidates.map(lakeFile).filter(Boolean))];
+      if(!files.length) return fallback;
+
+      let nearest = null;
+
+      for(const file of files){
+        const lakes = await loadLakePrefFile(file);
+        for(const lake of lakes){
+          const name = lakeName(lake);
+          const geom = lakeGeometry(lake);
+          if(!name || !geom) continue;
+
+          const b = lakeBbox(lake);
+          if(b && !inBbox(lng, lat, b, BBOX_MARGIN_DEG)) continue;
+
+          if(pointInGeometry(lng, lat, geom)){
+            return {
+              lake_name: name,
+              lake_source: 'ksj_w09_polygon',
+              lake_confidence: 1.0
+            };
+          }
+
+          const d = geometryDistanceMeters(lat, lng, geom);
+          if(Number.isFinite(d) && d <= NEAR_LIMIT_M){
+            if(!nearest || d < nearest.distance_m){
+              nearest = {
+                lake_name: name,
+                lake_source: 'ksj_w09_near',
+                lake_confidence: 0.7,
+                distance_m: d
+              };
+            }
+          }
+        }
+      }
+
+      return nearest || fallback;
+    }catch(e){
+      console.warn('[wakasagi] lake json guess failed; builtin fallback used if possible:', e);
+      return fallback;
+    }
   }
 
   async function fillLakeNameForTrip(t){
@@ -296,6 +358,86 @@
       console.warn('[wakasagi] lake_autofill skipped:', e);
     }
     return t;
+  }
+
+  function openTripDbDirect(){
+    return new Promise((resolve, reject) => {
+      try{
+        const req = indexedDB.open(DB_NAME);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error('indexedDB open failed'));
+      }catch(e){
+        reject(e);
+      }
+    });
+  }
+
+  function getAllTripsDirect(db){
+    return new Promise((resolve) => {
+      try{
+        if(!db || !db.objectStoreNames.contains(STORE_TRIPS)){
+          resolve([]);
+          return;
+        }
+        const tx = db.transaction(STORE_TRIPS, 'readonly');
+        const req = tx.objectStore(STORE_TRIPS).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      }catch(e){
+        resolve([]);
+      }
+    });
+  }
+
+  function putTripDirect(db, t){
+    return new Promise((resolve) => {
+      try{
+        const tx = db.transaction(STORE_TRIPS, 'readwrite');
+        tx.objectStore(STORE_TRIPS).put(t);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      }catch(e){
+        resolve(false);
+      }
+    });
+  }
+
+  async function repairSavedTripLakeNames(){
+    let db = null;
+
+    try{
+      db = await openTripDbDirect();
+      const rows = await getAllTripsDirect(db);
+      let fixed = 0;
+
+      for(const t of rows){
+        if(!t || typeof t !== 'object') continue;
+
+        const before = String(t.lake_name || t.lakeName || '').trim();
+        if(before) continue;
+
+        const lat = Number(t.lat);
+        const lng = Number(t.lng);
+        if(!validLatLng(lat, lng)) continue;
+
+        await fillLakeNameForTrip(t);
+
+        const after = String(t.lake_name || t.lakeName || '').trim();
+        if(after){
+          t.updated_ms = Date.now();
+          if(await putTripDirect(db, t)) fixed++;
+        }
+      }
+
+      if(fixed){
+        console.info('[wakasagi] repaired lake_name for saved trips:', fixed);
+      }
+    }catch(e){
+      console.warn('[wakasagi] saved trip lake repair skipped:', e);
+    }finally{
+      try{ if(db) db.close(); }catch(e){}
+    }
   }
 
   function distMeters(lat1, lng1, lat2, lng2){
@@ -454,6 +596,16 @@
       const baseLng = Number(payload.lng);
       if(!validLatLng(baseLat, baseLng)) return payload;
 
+      if(!String(payload.lake_name || payload.lakeName || '').trim()){
+        const tmp = { lat: baseLat, lng: baseLng };
+        await fillLakeNameForTrip(tmp);
+        if(tmp.lake_name){
+          payload.lake_name = tmp.lake_name;
+          payload.lake_source = tmp.lake_source || '';
+          payload.lake_confidence = Number(tmp.lake_confidence || 0);
+        }
+      }
+
       const getAll = getGlobalFunction('getAllTrips');
       if(!getAll) return payload;
 
@@ -539,10 +691,17 @@
 
   retryInstall();
 
+  // 既に保存済みの「湖名なし」データも補修する。
+  // 1回目は初期表示後、2回目は app.js のDB初期化が遅れた場合の保険。
+  setTimeout(repairSavedTripLakeNames, 1200);
+  setTimeout(repairSavedTripLakeNames, 5000);
+
   window.__wakasagiLakeAutofill = {
-    version: 'logsync-new-trip-fix-and-lake-autofill-20260512',
+    version: 'logsync-new-trip-fix-lake-repair-20260512',
     fillLakeNameForTrip,
+    repairSavedTripLakeNames,
     guessLakeNameFromLatLng,
+    guessLakeNameBuiltIn,
     fixedFindTripForLogSync,
     addHistoryCountsToMaplinkPayload,
     installFindTripFix,
