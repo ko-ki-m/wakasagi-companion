@@ -1,12 +1,26 @@
-アップロード方法
+# wakasagi-companion 修正ファイル
 
-1. このZIPを展開する。
-2. 中の lake_autofill.js を GitHub リポジトリのトップ階層へアップロードする。
-3. 既に lake_autofill.js がある場合は上書きする。
-4. index.html / app.js / viewer / Pico W側は触らない。
+アップロードするファイル:
 
-目的
-Pico W /log から GitHub Pages側へ戻った #logsync 保存時だけ、lake_name が空なら viewer/lakes の全国湖沼JSONから湖名を補完して保存する。
+- lake_autofill.js
 
-注意
-GitHub Pagesやブラウザのキャッシュにより、反映に少し時間がかかる場合があります。
+アップロード先:
+
+- wakasagi-companion リポジトリのトップ階層
+- 既存の lake_autofill.js を上書き
+
+触らないもの:
+
+- index.html
+- app.js
+- viewer/
+- Pico Wスケッチ
+
+修正内容:
+
+1. #logsync 保存時に、過去地点(map_spot_id)へ統合してしまい新規釣行回数が増えない問題を修正。
+   同じsidの再同期だけ既存データを更新し、初回logsyncは新しいtrip_recordsを作らせる。
+
+2. lake_name が空の場合だけ、viewer/lakes の全国湖沼JSONから湖名を補完。
+
+3. GitHubからPico Wへ渡すmaplink payloadに、同地点20m以内の過去回数/今日回数を付加。
