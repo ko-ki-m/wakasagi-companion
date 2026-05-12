@@ -697,7 +697,7 @@
   setTimeout(repairSavedTripLakeNames, 5000);
 
   window.__wakasagiLakeAutofill = {
-    version: 'logsync-new-trip-fix-lake-repair-20260512',
+    version: 'production-logsync-count-and-lake-name-fix-20260512',
     fillLakeNameForTrip,
     repairSavedTripLakeNames,
     guessLakeNameFromLatLng,
