@@ -106,19 +106,102 @@ function tripLakeGuessKey(t){
   return String(t.trip_id || '') || (String(t.date_ms || '') + ':' + String(t.lat || '') + ':' + String(t.lng || ''));
 }
 
+
+function distanceMetersLatLng(lat1, lng1, lat2, lng2){
+  const R = 6371008.8;
+  const p1 = lat1 * Math.PI / 180;
+  const p2 = lat2 * Math.PI / 180;
+  const dp = (lat2 - lat1) * Math.PI / 180;
+  const dl = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dp/2) * Math.sin(dp/2) +
+            Math.cos(p1) * Math.cos(p2) *
+            Math.sin(dl/2) * Math.sin(dl/2);
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function pointToSegmentDistanceMeters(lat, lng, lat1, lng1, lat2, lng2){
+  const R = 6371008.8;
+  const baseLatRad = lat * Math.PI / 180;
+
+  function xOf(lon){ return (lon - lng) * Math.PI / 180 * Math.cos(baseLatRad) * R; }
+  function yOf(la){ return (la - lat) * Math.PI / 180 * R; }
+
+  const ax = xOf(lng1), ay = yOf(lat1);
+  const bx = xOf(lng2), by = yOf(lat2);
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx*dx + dy*dy;
+
+  if(len2 <= 1e-9){
+    return Math.sqrt(ax*ax + ay*ay);
+  }
+
+  let t = -(ax*dx + ay*dy) / len2;
+  if(t < 0) t = 0;
+  if(t > 1) t = 1;
+
+  const cx = ax + t*dx;
+  const cy = ay + t*dy;
+  return Math.sqrt(cx*cx + cy*cy);
+}
+
+function ringDistanceMeters(lat, lng, ring){
+  let best = Infinity;
+  for(let i=0; i<ring.length-1; i++){
+    const a = ring[i];
+    const b = ring[i+1];
+    const d = pointToSegmentDistanceMeters(lat, lng, a[1], a[0], b[1], b[0]);
+    if(d < best) best = d;
+  }
+  return best;
+}
+
+function geometryDistanceMeters(lat, lng, geom){
+  if(!geom) return Infinity;
+  let best = Infinity;
+
+  if(geom.type === 'Polygon'){
+    for(const ring of geom.coordinates){
+      const d = ringDistanceMeters(lat, lng, ring);
+      if(d < best) best = d;
+    }
+    return best;
+  }
+
+  if(geom.type === 'MultiPolygon'){
+    for(const poly of geom.coordinates){
+      for(const ring of poly){
+        const d = ringDistanceMeters(lat, lng, ring);
+        if(d < best) best = d;
+      }
+    }
+    return best;
+  }
+
+  return Infinity;
+}
+
+
 async function guessLakeNameFromLatLng(lat, lng){
   if(!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
   const index = await loadLakeIndex();
-  const marginDeg = 0.003; // bbox候補拡張。約300m相当。
+
+  // bbox候補拡張。湖岸付近・GPSずれを拾うため約500m相当に広げる。
+  const marginDeg = 0.005;
+  const nearLimitM = 500;
+
   const candidates = (index.lakes || []).filter(lake => inBboxLngLat(lng, lat, lake.bbox, marginDeg));
   if(!candidates.length) return null;
 
   const files = [...new Set(candidates.map(c => c.file))];
+  let nearest = null;
+
   for(const file of files){
     const lakes = await loadLakePrefFile(file);
+
     for(const lake of lakes){
       if(!inBboxLngLat(lng, lat, lake.bbox, marginDeg)) continue;
+
       if(pointInGeometry(lng, lat, lake.geometry)){
         return {
           lake_name: lake.name,
@@ -126,10 +209,22 @@ async function guessLakeNameFromLatLng(lat, lng){
           lake_confidence: 1.0
         };
       }
+
+      const d = geometryDistanceMeters(lat, lng, lake.geometry);
+      if(Number.isFinite(d) && d <= nearLimitM){
+        if(!nearest || d < nearest.distance_m){
+          nearest = {
+            lake_name: lake.name,
+            lake_source: 'ksj_w09_near',
+            lake_confidence: 0.7,
+            distance_m: d
+          };
+        }
+      }
     }
   }
 
-  return null;
+  return nearest;
 }
 
 async function enrichLakeGuessesForTrips(trips){
