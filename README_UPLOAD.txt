@@ -1,26 +1,17 @@
-# wakasagi-companion 修正ファイル
+アップロード内容
 
-アップロードするファイル:
+GitHubリポジトリのトップ階層に lake_name_check.html を追加アップロードしてください。
 
-- lake_autofill.js
+対象:
+  /wakasagi-companion/lake_name_check.html
 
-アップロード先:
+触らない:
+  index.html
+  app.js
+  lake_autofill.js
+  viewer/
+  Pico Wスケッチ
 
-- wakasagi-companion リポジトリのトップ階層
-- 既存の lake_autofill.js を上書き
-
-触らないもの:
-
-- index.html
-- app.js
-- viewer/
-- Pico Wスケッチ
-
-修正内容:
-
-1. #logsync 保存時に、過去地点(map_spot_id)へ統合してしまい新規釣行回数が増えない問題を修正。
-   同じsidの再同期だけ既存データを更新し、初回logsyncは新しいtrip_recordsを作らせる。
-
-2. lake_name が空の場合だけ、viewer/lakes の全国湖沼JSONから湖名を補完。
-
-3. GitHubからPico Wへ渡すmaplink payloadに、同地点20m以内の過去回数/今日回数を付加。
+目的:
+  自宅でも湖名補完を確認するため、同じChrome IndexedDBに野尻湖座標のテスト釣行を1件だけ追加する一時診断ページです。
+  確認後、このページ内の削除ボタンでテスト釣行を削除してください。

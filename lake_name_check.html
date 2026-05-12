@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>湖名補完確認</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:18px;background:#f5f7fb;color:#111}
+h1{font-size:24px;margin:0 0 12px}
+p{font-size:16px;line-height:1.6}
+.card{background:#fff;border-radius:14px;padding:14px;margin:12px 0;box-shadow:0 2px 10px rgba(0,0,0,.08)}
+button{width:100%;font-size:18px;font-weight:700;padding:14px;margin:8px 0;border:0;border-radius:12px;background:#1769e0;color:#fff}
+button.danger{background:#c62828}
+button.gray{background:#555}
+pre{white-space:pre-wrap;word-break:break-word;background:#111;color:#e8ffe8;padding:12px;border-radius:10px;font-size:14px;line-height:1.45}
+a{color:#1769e0;font-weight:700}
+</style>
+</head>
+<body>
+<h1>湖名補完確認</h1>
+
+<div class="card">
+<p>
+このページは開発確認用です。<br>
+同じChrome通常タブの IndexedDB に、野尻湖座標のテスト釣行を1件だけ追加します。<br>
+確認後は削除してください。
+</p>
+</div>
+
+<div class="card">
+<button onclick="addTestTrip()">1. 野尻湖テスト釣行を追加</button>
+<button class="gray" onclick="checkTestTrip()">2. テスト釣行のDB状態を確認</button>
+<button class="danger" onclick="deleteTestTrip()">3. テスト釣行を削除</button>
+</div>
+
+<div class="card">
+<p>
+追加後に本体連携側トップを1回開くと、lake_autofill.js が湖名補完を実行します。<br>
+<a href="./" target="_blank">本体連携側トップを開く</a><br><br>
+その後、viewerで「野尻湖」が出るか確認します。<br>
+<a href="./viewer/" target="_blank">viewerを開く</a>
+</p>
+</div>
+
+<pre id="log">待機中</pre>
+
+<script>
+const DB_NAME = 'wakasagi_trip_map_v10';
+const STORE_TRIPS = 'trip_records';
+const TEST_ID = 'lake-name-test-nojiri-20260512';
+
+function log(msg){
+  document.getElementById('log').textContent = String(msg);
+}
+
+function openDb(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if(!db.objectStoreNames.contains(STORE_TRIPS)){
+        db.createObjectStore(STORE_TRIPS, {keyPath:'id'});
+      }
+    };
+  });
+}
+
+function putTrip(db, t){
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_TRIPS, 'readwrite');
+    tx.objectStore(STORE_TRIPS).put(t);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error || new Error('put failed'));
+  });
+}
+
+function getTrip(db, id){
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_TRIPS, 'readonly');
+    const req = tx.objectStore(STORE_TRIPS).get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error || new Error('get failed'));
+  });
+}
+
+function deleteTrip(db, id){
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_TRIPS, 'readwrite');
+    tx.objectStore(STORE_TRIPS).delete(id);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error || new Error('delete failed'));
+  });
+}
+
+async function addTestTrip(){
+  let db = null;
+  try{
+    db = await openDb();
+
+    const now = Date.now();
+    const trip = {
+      id: TEST_ID,
+      sid: TEST_ID,
+      date_ms: now,
+      created_ms: now,
+      updated_ms: now,
+      title: '湖名補完確認用テスト',
+      point_name: '湖名補完確認用テスト',
+      lake_name: '',
+      lat: 36.8325,
+      lng: 138.2096,
+      note: '確認後に lake_name_check.html で削除する一時テストデータ',
+      test_record: true,
+      source: 'lake_name_check'
+    };
+
+    await putTrip(db, trip);
+    log('追加しました。\n\n次の順番で確認してください。\n1. 本体連携側トップを開く\n2. 5秒待つ\n3. viewerを開く\n4. このページに戻って「DB状態を確認」\n\n期待値:\nlake_name = 野尻湖');
+  }catch(e){
+    log('追加失敗:\n' + (e && e.stack ? e.stack : e));
+  }finally{
+    try{ if(db) db.close(); }catch(e){}
+  }
+}
+
+async function checkTestTrip(){
+  let db = null;
+  try{
+    db = await openDb();
+    const t = await getTrip(db, TEST_ID);
+
+    if(!t){
+      log('テスト釣行はありません。');
+      return;
+    }
+
+    log(
+      'テスト釣行あり\n\n' +
+      'id: ' + (t.id || '') + '\n' +
+      'lat: ' + t.lat + '\n' +
+      'lng: ' + t.lng + '\n' +
+      'lake_name: ' + (t.lake_name || '(空)') + '\n' +
+      'lake_source: ' + (t.lake_source || '(空)') + '\n' +
+      'lake_confidence: ' + (t.lake_confidence ?? '(空)') + '\n\n' +
+      JSON.stringify(t, null, 2)
+    );
+  }catch(e){
+    log('確認失敗:\n' + (e && e.stack ? e.stack : e));
+  }finally{
+    try{ if(db) db.close(); }catch(e){}
+  }
+}
+
+async function deleteTestTrip(){
+  let db = null;
+  try{
+    db = await openDb();
+    await deleteTrip(db, TEST_ID);
+    log('削除しました。viewerからもテスト釣行が消えます。');
+  }catch(e){
+    log('削除失敗:\n' + (e && e.stack ? e.stack : e));
+  }finally{
+    try{ if(db) db.close(); }catch(e){}
+  }
+}
+</script>
+</body>
+</html>
