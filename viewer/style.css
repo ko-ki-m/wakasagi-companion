@@ -57,3 +57,15 @@ footer{text-align:center;padding:10px 14px 22px;color:#64748b;font-size:11px;lin
   border-color: var(--blue);
   box-shadow: 0 0 0 3px rgba(11,132,255,.16);
 }
+
+
+.debugButton{
+  border-color: #f59e0b;
+  color: #92400e;
+  background: #fffbeb;
+}
+.debugButton.danger{
+  border-color: #dc2626;
+  color: #991b1b;
+  background: #fee2e2;
+}
