@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>湖名補完確認</title>
+<title>湖名補完確認 v2</title>
 <style>
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:18px;background:#f5f7fb;color:#111}
 h1{font-size:24px;margin:0 0 12px}
@@ -17,7 +17,7 @@ a{color:#1769e0;font-weight:700}
 </style>
 </head>
 <body>
-<h1>湖名補完確認</h1>
+<h1>湖名補完確認 v2</h1>
 
 <div class="card">
 <p>
@@ -47,7 +47,7 @@ a{color:#1769e0;font-weight:700}
 <script>
 const DB_NAME = 'wakasagi_trip_map_v10';
 const STORE_TRIPS = 'trip_records';
-const TEST_ID = 'lake-name-test-nojiri-20260512';
+const TEST_TRIP_ID = 'lake-name-test-nojiri-20260512-v2';
 
 function log(msg){
   document.getElementById('log').textContent = String(msg);
@@ -55,13 +55,17 @@ function log(msg){
 
 function openDb(){
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME);
+    const req = indexedDB.open(DB_NAME, 1);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
     req.onupgradeneeded = () => {
       const db = req.result;
       if(!db.objectStoreNames.contains(STORE_TRIPS)){
-        db.createObjectStore(STORE_TRIPS, {keyPath:'id'});
+        const st = db.createObjectStore(STORE_TRIPS, {keyPath:'trip_id'});
+        st.createIndex('date_ms', 'date_ms', {unique:false});
+      }
+      if(!db.objectStoreNames.contains('meta')){
+        db.createObjectStore('meta', {keyPath:'key'});
       }
     };
   });
@@ -73,24 +77,26 @@ function putTrip(db, t){
     tx.objectStore(STORE_TRIPS).put(t);
     tx.oncomplete = () => resolve(true);
     tx.onerror = () => reject(tx.error || new Error('put failed'));
+    tx.onabort = () => reject(tx.error || new Error('put aborted'));
   });
 }
 
-function getTrip(db, id){
+function getTrip(db, tripId){
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_TRIPS, 'readonly');
-    const req = tx.objectStore(STORE_TRIPS).get(id);
+    const req = tx.objectStore(STORE_TRIPS).get(tripId);
     req.onsuccess = () => resolve(req.result || null);
     req.onerror = () => reject(req.error || new Error('get failed'));
   });
 }
 
-function deleteTrip(db, id){
+function deleteTrip(db, tripId){
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_TRIPS, 'readwrite');
-    tx.objectStore(STORE_TRIPS).delete(id);
+    tx.objectStore(STORE_TRIPS).delete(tripId);
     tx.oncomplete = () => resolve(true);
     tx.onerror = () => reject(tx.error || new Error('delete failed'));
+    tx.onabort = () => reject(tx.error || new Error('delete aborted'));
   });
 }
 
@@ -101,17 +107,24 @@ async function addTestTrip(){
 
     const now = Date.now();
     const trip = {
-      id: TEST_ID,
-      sid: TEST_ID,
+      trip_id: TEST_TRIP_ID,
+      sid: TEST_TRIP_ID,
       date_ms: now,
       created_ms: now,
       updated_ms: now,
-      title: '湖名補完確認用テスト',
-      point_name: '湖名補完確認用テスト',
       lake_name: '',
+      point_name: '湖名補完確認用テスト',
       lat: 36.8325,
       lng: 138.2096,
-      note: '確認後に lake_name_check.html で削除する一時テストデータ',
+      accuracy_m: 5,
+      location_time_ms: now,
+      line_no: '',
+      sinker_g: '',
+      fishfinder_depth_m: '',
+      water_temp_c: '',
+      weather: '',
+      wind: '',
+      memo: '確認後に lake_name_check.html で削除する一時テストデータ',
       test_record: true,
       source: 'lake_name_check'
     };
@@ -129,7 +142,7 @@ async function checkTestTrip(){
   let db = null;
   try{
     db = await openDb();
-    const t = await getTrip(db, TEST_ID);
+    const t = await getTrip(db, TEST_TRIP_ID);
 
     if(!t){
       log('テスト釣行はありません。');
@@ -138,7 +151,7 @@ async function checkTestTrip(){
 
     log(
       'テスト釣行あり\n\n' +
-      'id: ' + (t.id || '') + '\n' +
+      'trip_id: ' + (t.trip_id || '') + '\n' +
       'lat: ' + t.lat + '\n' +
       'lng: ' + t.lng + '\n' +
       'lake_name: ' + (t.lake_name || '(空)') + '\n' +
@@ -157,7 +170,7 @@ async function deleteTestTrip(){
   let db = null;
   try{
     db = await openDb();
-    await deleteTrip(db, TEST_ID);
+    await deleteTrip(db, TEST_TRIP_ID);
     log('削除しました。viewerからもテスト釣行が消えます。');
   }catch(e){
     log('削除失敗:\n' + (e && e.stack ? e.stack : e));
