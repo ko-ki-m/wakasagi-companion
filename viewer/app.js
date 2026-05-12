@@ -308,15 +308,21 @@ function renderRelated(base, related){
     box.innerHTML = '<p>同じ場所の過去履歴はありません。</p>';
     return;
   }
+
   box.innerHTML = `
     <h3>この場所の過去釣行日</h3>
+    <p class="relatedHint">見たい日付をタップすると、その釣行回の詳細を表示します。</p>
     <div class="relatedList">
-      ${related.map(({trip, d}) => `
-        <div class="relatedItem">
-          <strong>${esc(fmtDate(tms(trip)))}　${esc(displayLakeName(trip))}</strong>
-          <span>${esc(displayPointName(trip))} / ${Math.round(d)}m以内 / ライン ${esc(trip.line_no || '-')} / シンカー ${esc(trip.sinker_g || '-')}g</span>
-        </div>
-      `).join('')}
+      ${related.map(({trip, d}) => {
+        const id = esc(String(trip.trip_id || ''));
+        const selected = String(selectedTripId || '') === String(trip.trip_id || '');
+        return `
+          <button type="button" class="relatedItem relatedButton${selected ? ' selected' : ''}" data-trip-id="${id}">
+            <strong>${esc(fmtDate(tms(trip)))}　${esc(displayLakeName(trip))}</strong>
+            <span>${esc(displayPointName(trip))} / ${Math.round(d)}m以内 / ライン ${esc(trip.line_no || '-')} / シンカー ${esc(trip.sinker_g || '-')}g</span>
+          </button>
+        `;
+      }).join('')}
     </div>
   `;
 }

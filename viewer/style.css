@@ -40,3 +40,20 @@ p{margin:7px 0;color:var(--muted);line-height:1.65;font-size:14px}
 .cluster.selected{background:var(--red)}
 footer{text-align:center;padding:10px 14px 22px;color:#64748b;font-size:11px;line-height:1.5}
 @media(max-width:620px){.controlGrid{grid-template-columns:1fr}.actions{flex-direction:column}.detailGrid{grid-template-columns:96px 1fr}#map{height:330px}h1{font-size:21px}}
+
+
+.relatedHint{
+  margin: 4px 0 8px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+}
+.relatedButton{
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+.relatedButton.selected{
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(11,132,255,.16);
+}
