@@ -12,6 +12,10 @@ let selectedTripId = null;
 let map = null;
 let markers = null;
 
+let g_lakeIndex = null;
+const g_lakePrefCache = new Map();
+const g_lakeGuessCache = new Map();
+
 const $ = (id) => document.getElementById(id);
 
 function esc(v){
@@ -41,9 +45,126 @@ function toNum(v){
 function lat(t){ return toNum(t.lat); }
 function lng(t){ return toNum(t.lng); }
 function tms(t){ return Number(t.date_ms || t.start_ms || t.created_ms || t.location_time_ms || 0); }
+
+async function loadLakeIndex(){
+  if(g_lakeIndex) return g_lakeIndex;
+  const res = await fetch('./lakes/index.json', {cache:'force-cache'});
+  if(!res.ok) throw new Error('lakes/index.json を読めません');
+  g_lakeIndex = await res.json();
+  return g_lakeIndex;
+}
+
+async function loadLakePrefFile(file){
+  if(g_lakePrefCache.has(file)) return g_lakePrefCache.get(file);
+  const res = await fetch('./lakes/' + file, {cache:'force-cache'});
+  if(!res.ok) throw new Error('./lakes/' + file + ' を読めません');
+  const data = await res.json();
+  g_lakePrefCache.set(file, data);
+  return data;
+}
+
+function inBboxLngLat(lng, lat, bbox, marginDeg = 0){
+  return lng >= bbox[0] - marginDeg &&
+         lat >= bbox[1] - marginDeg &&
+         lng <= bbox[2] + marginDeg &&
+         lat <= bbox[3] + marginDeg;
+}
+
+function pointInRing(lng, lat, ring){
+  let inside = false;
+  for(let i=0, j=ring.length-1; i<ring.length; j=i++){
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    const intersect = ((yi > lat) !== (yj > lat)) &&
+      (lng < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi);
+    if(intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function pointInPolygon(lng, lat, polygonCoords){
+  if(!polygonCoords || !polygonCoords.length) return false;
+  if(!pointInRing(lng, lat, polygonCoords[0])) return false;
+  for(let i=1; i<polygonCoords.length; i++){
+    if(pointInRing(lng, lat, polygonCoords[i])) return false;
+  }
+  return true;
+}
+
+function pointInGeometry(lng, lat, geom){
+  if(!geom) return false;
+  if(geom.type === 'Polygon'){
+    return pointInPolygon(lng, lat, geom.coordinates);
+  }
+  if(geom.type === 'MultiPolygon'){
+    return geom.coordinates.some(poly => pointInPolygon(lng, lat, poly));
+  }
+  return false;
+}
+
+function tripLakeGuessKey(t){
+  return String(t.trip_id || '') || (String(t.date_ms || '') + ':' + String(t.lat || '') + ':' + String(t.lng || ''));
+}
+
+async function guessLakeNameFromLatLng(lat, lng){
+  if(!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const index = await loadLakeIndex();
+  const marginDeg = 0.003; // bbox候補拡張。約300m相当。
+  const candidates = (index.lakes || []).filter(lake => inBboxLngLat(lng, lat, lake.bbox, marginDeg));
+  if(!candidates.length) return null;
+
+  const files = [...new Set(candidates.map(c => c.file))];
+  for(const file of files){
+    const lakes = await loadLakePrefFile(file);
+    for(const lake of lakes){
+      if(!inBboxLngLat(lng, lat, lake.bbox, marginDeg)) continue;
+      if(pointInGeometry(lng, lat, lake.geometry)){
+        return {
+          lake_name: lake.name,
+          lake_source: 'ksj_w09_polygon',
+          lake_confidence: 1.0
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+async function enrichLakeGuessesForTrips(trips){
+  try{
+    const targets = trips.filter(t => {
+      const current = String(t.lake_name || t.lakeName || '').trim();
+      return !current && validLatLng(lat(t), lng(t));
+    });
+
+    for(const t of targets){
+      const key = tripLakeGuessKey(t);
+      if(g_lakeGuessCache.has(key)) continue;
+      const guess = await guessLakeNameFromLatLng(lat(t), lng(t));
+      if(guess && guess.lake_name){
+        g_lakeGuessCache.set(key, guess);
+      }else{
+        g_lakeGuessCache.set(key, null);
+      }
+    }
+  }catch(e){
+    // 湖名推定に失敗しても、閲覧機能自体は止めない。
+    console.warn('lake guess failed', e);
+  }
+}
+
 function displayLakeName(t){
   const lake = String(t.lake_name || t.lakeName || '').trim();
-  return lake || '湖名未登録';
+  if(lake) return lake;
+
+  const guess = g_lakeGuessCache.get(tripLakeGuessKey(t));
+  if(guess && guess.lake_name){
+    return guess.lake_name;
+  }
+
+  return '湖名未登録';
 }
 function displayPointName(t){
   const point = String(t.point_name || t.pointName || '').trim();
@@ -351,6 +472,12 @@ async function reload(){
     db = await openDb();
     allTrips = (await getAllTrips()).filter((t) => validLatLng(lat(t), lng(t)));
     setBadge('dbBadge', `${allTrips.length}件`, allTrips.length ? 'good' : 'warn');
+    $('statusText').textContent = allTrips.length
+      ? `保存済み過去釣行 ${allTrips.length}件を読み込みました。湖名を確認しています...`
+      : '保存済み過去釣行データがありません。';
+
+    await enrichLakeGuessesForTrips(allTrips);
+
     $('statusText').textContent = allTrips.length
       ? `保存済み過去釣行 ${allTrips.length}件を読み込みました。`
       : '保存済み過去釣行データがありません。';
