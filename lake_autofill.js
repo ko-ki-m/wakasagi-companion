@@ -598,13 +598,8 @@
       for(const t of rows){
         if(!t || typeof t !== 'object') continue;
 
-        const before = String(t.lake_name || t.lakeName || '').trim();
-        if(before) continue;
-
-        const lat = Number(t.lat);
-        const lng = Number(t.lng);
-        if(!validLatLng(lat, lng)) continue;
-
+        // lake_name が既に入っている履歴も、水深・天気・風・line/sinker補修の対象にする。
+        // ここで continue すると、湖名だけ入った過去履歴の自動補修が一切走らない。
         const beforeAuto = JSON.stringify({
           lake_name: t.lake_name || '',
           line_no: t.line_no || '',
@@ -617,8 +612,14 @@
 
         await fillLakeNameForTrip(t);
 
+        // 既存履歴補修でも、trip本体 / pico_summary / pico_logs の正規キー line_no / sinker_g から実値を復旧する。
+        v20260513_forceExactLineSinker(t, null);
+
         const needWeather = (isBlankValue(t.weather) || isBlankValue(t.wind)) && fixed < AUTO_REPAIR_MAX_WEATHER_FETCHES;
         await fillAutoFieldsForTrip(t, rows, { allowWeather: needWeather });
+
+        // fillAutoFields後にも、line/sinkerが未登録へ戻らないよう正規キーを再反映する。
+        v20260513_forceExactLineSinker(t, null);
 
         const afterAuto = JSON.stringify({
           lake_name: t.lake_name || '',
@@ -1524,7 +1525,7 @@
   setTimeout(repairBadLineSinkerPlaceholders, 5200);
 
   window.__wakasagiLakeAutofill = {
-    version: 'production-exact-line-sinker-puttrip-repair-20260513',
+    version: 'production-repair-all-history-fields-20260513',
     fillLakeNameForTrip,
     fillAutoFieldsForTrip,
     fillWeatherForTrip,

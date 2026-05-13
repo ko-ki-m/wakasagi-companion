@@ -3,35 +3,37 @@
 対象:
   lake_autofill.js
 
+修正内容:
+  1. repairSavedTripLakeNames() が lake_name 既存レコードを skip しない。
+  2. validLatLng不正だけで水深補修まで skip しない。
+  3. 既存履歴補修内でも pico_summary / pico_logs の正規キー line_no / sinker_g から実値を復旧する。
+  4. line_no / sinker_g は正規キーが無い場合は推測補完しない。
+
 構文:
   node --check: OK
 
 静的検査:
-  ライン履歴補完: なし
-  シンカー履歴補完: なし
-  line_no/sinker_g 未登録投入: なし
-  tmpAuto内line_no/sinker_g: なし
-  inheritTripFieldsFromHistory内line/sinker: なし
-  fillAutoFieldsForTrip内line/sinker: なし
-
-ラッパー:
-  v112_applyLogSyncPayload上書き: 1箇所
-  putTrip修復wrapper: 0箇所
-  setGlobalPutTripヘルパー: 1箇所
+  lake_name既存skip: なし
+  validLatLngによる全体skip: なし
+  line/sinker履歴補完: なし
+  line/sinker未登録投入: なし
+  fillAutoFieldsForTrip内line/sinker接触: なし
 
 動的検査:
-  Case A #logsync payload正規キー保存: OK
-  Case B putTrip/pico_summary未登録置換: OK
-  Case C 正規キー無しなら未登録を入れない: OK
-  Case D 履歴line/sinkerを継承しない: OK
+  lake_name既存の過去履歴に対して、line_no復旧: OK
+  lake_name既存の過去履歴に対して、sinker_g復旧: OK
+  lake_name既存の過去履歴に対して、水深water_depth_m補修: OK
+  lake_name既存の過去履歴に対して、fishfinder_depth_m互換補修: OK
+  lake_name既存の過去履歴に対して、天気補修: OK
+  lake_name既存の過去履歴に対して、風補修: OK
+  line/sinker正規キーが無い履歴へ推測補完しない: OK
 
 残存機能:
   #logsync回数増加修正: あり
   湖名補完: あり
   水深自動入力: あり
   天気・風自動取得: あり
-  既存DB補修: あり
   正規line/sinker反映: あり
 
 sha256:
-  b83fcc94d5e668a7d1c8b823579b0625f76796ff4385c74b4fdcd63e8c023397
+  81cea2545b6d2d1ad756fc3eb2cce3ed7441f2c67a4e07a3165876e988e8250a
