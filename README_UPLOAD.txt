@@ -1,18 +1,15 @@
-GitHub側 v20260513D
+GitHub側 上書き手順
 
-リポジトリ直下へアップロード/上書きするファイル:
-- index.html
-- mapsync_topfields_fix_20260513D.js
+1. GitHubリポジトリ直下の index.html を、このZIP内の index.html で上書きする。
+2. GitHubリポジトリ直下の app.js を、このZIP内の app.js で上書きする。
+3. 追加JS方式は使わない。下記ファイルは削除する。
+   - mapsync_topfields_fix_20260513.js
+   - mapsync_topfields_fix_20260513b.js
+   - mapsync_topfields_fix_20260513C.js
+   - mapsync_topfields_fix_20260513D.js
+4. 触らないファイル：
+   - lake_autofill.js
+   - viewer/index.html
+   - viewer/app.js
 
-触らないファイル:
-- app.js
-- lake_autofill.js
-- viewer/index.html
-- viewer/app.js
-
-index.html には以下を追加済み:
-<script src="./mapsync_topfields_fix_20260513D.js?v=20260513D" defer></script>
-
-重要:
-GitHub側だけでは payload に無い値は作れません。
-先に .ino 側 v20260513D を入れ、Pico W の /log から地図連携を再実行してください。
+index.html は app.js?v=116 を読む形に変更済み。
