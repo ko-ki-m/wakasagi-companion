@@ -1,20 +1,12 @@
-アップロード内容
+GitHub Pages側 修正ZIP（2026-05-13）
 
-GitHubリポジトリのトップ階層に lake_autofill.js を上書きアップロードしてください。
+このZIPの中身をリポジトリ直下へアップロードしてください。
 
-対象:
-  /wakasagi-companion/lake_autofill.js
+含まれるファイル:
+- index.html
+- mapsync_topfields_fix_20260513.js
 
-今回の修正:
-  既存の過去履歴で lake_name が既に入っているデータも、
-  line_no / sinker_g / 水深 / 天気 / 風 の補修対象にする。
-  line_no / sinker_g は正規キーがある場合だけ復旧し、推測補完はしない。
+index.html は現行GitHub上の index.html を基準に、末尾の読み込みへ次の1行だけ追加したものです。
+<script src="./mapsync_topfields_fix_20260513.js?v=20260513" defer></script>
 
-触らない:
-  index.html
-  app.js
-  viewer/
-  Pico Wスケッチ
-
-検査:
-  inspection_report.txt を同梱しています。
+viewer/index.html と viewer/app.js は含めていません。viewer側は触りません。
