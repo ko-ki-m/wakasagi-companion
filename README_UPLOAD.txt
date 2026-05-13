@@ -1,14 +1,18 @@
-# wakasagi GitHub Pages mapsync fix 20260513C
+GitHub側 v20260513D
 
-Upload/overwrite these files at repository root:
-
+リポジトリ直下へアップロード/上書きするファイル:
 - index.html
-- mapsync_topfields_fix_20260513C.js
+- mapsync_topfields_fix_20260513D.js
 
-Do not touch viewer/index.html or viewer/app.js.
-Do not touch app.js or lake_autofill.js for this patch.
+触らないファイル:
+- app.js
+- lake_autofill.js
+- viewer/index.html
+- viewer/app.js
 
-After upload, confirm that published index.html contains:
-<script src="./mapsync_topfields_fix_20260513C.js?v=20260513C" defer></script>
+index.html には以下を追加済み:
+<script src="./mapsync_topfields_fix_20260513D.js?v=20260513D" defer></script>
 
-This GitHub-side patch only copies fields that are present in #logsync payload or already stored pico_summary/pico_logs. The Pico W .ino patch is required to put line_no/sinker_g/fishfinder_depth_m into the payload from logs.
+重要:
+GitHub側だけでは payload に無い値は作れません。
+先に .ino 側 v20260513D を入れ、Pico W の /log から地図連携を再実行してください。
