@@ -496,18 +496,6 @@
     return String((a && a.trip_id) || '') === String((b && b.trip_id) || '');
   }
 
-  function pickHistoryValue(historyRows, keys){
-    for(const row of historyRows){
-      const t = row && row.t ? row.t : row;
-      if(!t) continue;
-      for(const key of keys){
-        const v = t[key];
-        if(!isBlankValue(v)) return String(v).trim();
-      }
-    }
-    return '';
-  }
-
   function historyRowsForAutoFill(trip, allTrips, limitM, preferPast){
     const a = Number(trip && trip.lat);
     const b = Number(trip && trip.lng);
@@ -553,15 +541,54 @@
 
   function isPlaceholderValue(v){
     const s = String(v == null ? '' : v).trim();
-    return !s || s === AUTO_FIELD_UNREGISTERED || s === AUTO_FIELD_UNAVAILABLE || s === '-' || s === '0' || s === '0.0';
+    if(!s) return true;
+
+    const normalized = s
+      .replace(/[　\s]/g, '')
+      .replace(/[－ー―—]/g, '-')
+      .toLowerCase();
+
+    return normalized === AUTO_FIELD_UNREGISTERED ||
+           normalized === AUTO_FIELD_UNAVAILABLE ||
+           normalized === '未設定' ||
+           normalized === '未入力' ||
+           normalized === '不明' ||
+           normalized === 'なし' ||
+           normalized === 'na' ||
+           normalized === 'n/a' ||
+           normalized === '-' ||
+           normalized === '--' ||
+           normalized === '0' ||
+           normalized === '0.0';
+  }
+
+  function cleanRealValue(v){
+    if(isPlaceholderValue(v)) return '';
+    return String(v).trim();
   }
 
   function setIfBlankOrPlaceholder(trip, key, value){
     if(!trip || !key) return false;
     if(!isPlaceholderValue(trip[key])) return false;
-    if(isBlankValue(value)) return false;
-    trip[key] = String(value).trim();
+
+    const real = cleanRealValue(value);
+    if(!real) return false;
+
+    trip[key] = real;
     return true;
+  }
+
+  function pickHistoryValue(historyRows, keys){
+    for(const row of historyRows){
+      const t = row && row.t ? row.t : row;
+      if(!t) continue;
+
+      for(const key of keys){
+        const v = cleanRealValue(t[key]);
+        if(v) return v;
+      }
+    }
+    return '';
   }
 
   function normalizeDepthMeters(value, keyName){
@@ -781,17 +808,42 @@
         const rows = set.rows || [];
         if(!rows.length) continue;
 
-        if(isBlankValue(trip.line_no)){
-          const v = pickHistoryValue(rows, ['line_no', 'line']);
-          if(setIfBlank(trip, 'line_no', v)){
+        if(isPlaceholderValue(trip.line_no)){
+          const v = pickHistoryValue(rows, [
+            'line_no',
+            'line',
+            'lineNo',
+            'line_no_text',
+            'line_text',
+            'line_gou',
+            'lineGauge',
+            'pe_no',
+            'pe',
+            '糸',
+            'ライン'
+          ]);
+          if(setIfBlankOrPlaceholder(trip, 'line_no', v)){
             changed = true;
             source = source || set.source;
           }
         }
 
-        if(isBlankValue(trip.sinker_g)){
-          const v = pickHistoryValue(rows, ['sinker_g', 'sinker']);
-          if(setIfBlank(trip, 'sinker_g', v)){
+        if(isPlaceholderValue(trip.sinker_g)){
+          const v = pickHistoryValue(rows, [
+            'sinker_g',
+            'sinker',
+            'sinkerG',
+            'sinker_weight_g',
+            'sinkerWeightG',
+            'weight_g',
+            'omori_g',
+            'omoriG',
+            'sinkerg',
+            '錘',
+            '重り',
+            'シンカー'
+          ]);
+          if(setIfBlankOrPlaceholder(trip, 'sinker_g', v)){
             changed = true;
             source = source || set.source;
           }
@@ -815,8 +867,8 @@
           }
         }
 
-        if(!isBlankValue(trip.line_no) &&
-           !isBlankValue(trip.sinker_g) &&
+        if(!isPlaceholderValue(trip.line_no) &&
+           !isPlaceholderValue(trip.sinker_g) &&
            !isPlaceholderValue(trip.water_depth_m) &&
            !isPlaceholderValue(trip.fishfinder_depth_m)){
           break;
@@ -825,8 +877,8 @@
 
       // ここまで集めても情報源が無い場合は、viewer上で空欄にならないよう未登録で固定する。
       // 実値が後で入った場合は、既存値上書き禁止ルールによりここでは上書きしない。
-      if(setIfBlank(trip, 'line_no', AUTO_FIELD_UNREGISTERED)) changed = true;
-      if(setIfBlank(trip, 'sinker_g', AUTO_FIELD_UNREGISTERED)) changed = true;
+      if(setIfBlankOrPlaceholder(trip, 'line_no', AUTO_FIELD_UNREGISTERED)) changed = true;
+      if(setIfBlankOrPlaceholder(trip, 'sinker_g', AUTO_FIELD_UNREGISTERED)) changed = true;
       if(setIfBlankOrPlaceholder(trip, 'water_depth_m', AUTO_FIELD_UNREGISTERED)) changed = true;
       if(setIfBlankOrPlaceholder(trip, 'fishfinder_depth_m', AUTO_FIELD_UNREGISTERED)) changed = true;
 
@@ -840,8 +892,8 @@
       console.warn('[wakasagi] inheritTripFieldsFromHistory skipped:', e);
 
       let changed = false;
-      changed = setIfBlank(trip, 'line_no', AUTO_FIELD_UNREGISTERED) || changed;
-      changed = setIfBlank(trip, 'sinker_g', AUTO_FIELD_UNREGISTERED) || changed;
+      changed = setIfBlankOrPlaceholder(trip, 'line_no', AUTO_FIELD_UNREGISTERED) || changed;
+      changed = setIfBlankOrPlaceholder(trip, 'sinker_g', AUTO_FIELD_UNREGISTERED) || changed;
       changed = setIfBlankOrPlaceholder(trip, 'water_depth_m', AUTO_FIELD_UNREGISTERED) || changed;
       changed = setIfBlankOrPlaceholder(trip, 'fishfinder_depth_m', AUTO_FIELD_UNREGISTERED) || changed;
       return changed;
@@ -1241,14 +1293,14 @@
         lat: baseLat,
         lng: baseLng,
         date_ms: Date.now(),
-        line_no: payload.line_no || '',
-        sinker_g: payload.sinker_g || '',
+        line_no: cleanRealValue(payload.line_no) || '',
+        sinker_g: cleanRealValue(payload.sinker_g) || '',
         water_depth_m: payload.water_depth_m || payload.fishfinder_m || payload.fishfinder_depth_m || '',
         fishfinder_depth_m: payload.fishfinder_m || payload.fishfinder_depth_m || ''
       };
       inheritTripFieldsFromHistory(tmpAuto, trips);
-      if(!String(payload.line_no || '').trim()) payload.line_no = tmpAuto.line_no || AUTO_FIELD_UNREGISTERED;
-      if(!String(payload.sinker_g || '').trim()) payload.sinker_g = tmpAuto.sinker_g || AUTO_FIELD_UNREGISTERED;
+      if(isPlaceholderValue(payload.line_no)) payload.line_no = cleanRealValue(tmpAuto.line_no) || AUTO_FIELD_UNREGISTERED;
+      if(isPlaceholderValue(payload.sinker_g)) payload.sinker_g = cleanRealValue(tmpAuto.sinker_g) || AUTO_FIELD_UNREGISTERED;
       if(!String(payload.fishfinder_m || payload.fishfinder_depth_m || payload.water_depth_m || '').trim()){
         const wd = tmpAuto.water_depth_m || tmpAuto.fishfinder_depth_m || AUTO_FIELD_UNREGISTERED;
         payload.water_depth_m = wd;
@@ -1342,7 +1394,7 @@
   setTimeout(repairSavedTripLakeNames, 5000);
 
   window.__wakasagiLakeAutofill = {
-    version: 'production-start-water-depth-20260512',
+    version: 'production-line-sinker-placeholder-repair-20260512',
     fillLakeNameForTrip,
     fillAutoFieldsForTrip,
     fillWeatherForTrip,
