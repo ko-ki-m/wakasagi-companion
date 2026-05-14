@@ -26,6 +26,33 @@ function genId(p){return `${p}${Date.now().toString(36)}${Math.floor(Math.random
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function validLatLng(lat,lng){return Number.isFinite(lat)&&Number.isFinite(lng)&&lat>=-90&&lat<=90&&lng>=-180&&lng<=180;}
 function dist(lat1,lng1,lat2,lng2){const R=6371008.8,r=v=>v*Math.PI/180;const p1=r(lat1),p2=r(lat2),dp=r(lat2-lat1),dl=r(lng2-lng1);const a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
+
+const SAME_DAY_POINT_M = 10;
+function dayKey(t){
+  const d=new Date(tms(t));
+  if(Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+function lakeKey(t){
+  return String(t && t.lake_name ? t.lake_name : '').trim().toLowerCase();
+}
+function sameFishingDayAndLake(a,b){
+  if(dayKey(a)!==dayKey(b)) return false;
+  const la=lakeKey(a), lb=lakeKey(b);
+  if(la && lb) return la===lb;
+  // 湖名未入力の自動連携でも、同日のポイント分割は効かせる。
+  return true;
+}
+function groupAcceptDistanceForTrip(g,t){
+  const trips=Array.isArray(g && g.trips) ? g.trips : [];
+  for(const old of trips){
+    if(!sameFishingDayAndLake(old,t)) continue;
+    const d=dist(lat(old),lng(old),lat(t),lng(t));
+    if(d < SAME_DAY_POINT_M) return SAME_DAY_POINT_M;
+    return -1;
+  }
+  return SAME_POINT_M;
+}
 function setBadge(id,text,cls=''){const el=$(id); if(!el)return; el.textContent=text; el.className=(id==='secureBadge'?'badge ':'pill ')+cls;}
 function title(t){return t.point_name||t.lake_name||'釣行地点';}
 function lat(t){return Number(t.lat);} function lng(t){return Number(t.lng);} function tms(t){return Number(t.date_ms||t.start_ms||t.created_ms||0);}
@@ -53,7 +80,44 @@ async function migrateOld(force=false){if(!force && await metaGet('old_migrated'
 
 function ensureMap(){if(map)return true;if(!window.L){$('mapStatus').textContent='地図ライブラリ未読込';return false;}map=L.map('map',{zoomControl:true}).setView(DEFAULT_CENTER,5);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},100);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},600);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);groupLayer=L.layerGroup().addTo(map);return true;}
 function drawCurrent(zoomNow=false){if(!currentPos||!ensureMap())return;const a=Number(currentPos.lat),b=Number(currentPos.lng),acc=Number(currentPos.acc||0);[currentMarker,accCircle,cur20,cur100].forEach(x=>{if(x)x.remove();});currentMarker=L.marker([a,b]).addTo(map).bindPopup('現在地');if(acc>0)accCircle=L.circle([a,b],{radius:acc}).addTo(map);cur20=L.circle([a,b],{radius:SAME_POINT_M,weight:2,fillOpacity:.04}).addTo(map);cur100=L.circle([a,b],{radius:SAME_AREA_M,weight:2,fillOpacity:.015}).addTo(map);if(zoomNow)map.setView([a,b],19);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},50);$('btnFitNear').disabled=false;$('btnSaveScroll').disabled=false;$('btnSaveTrip').disabled=false;}
-function makeGroups(trips){const valid=trips.filter(x=>validLatLng(lat(x),lng(x))).slice().sort((a,b)=>tms(b)-tms(a));const gs=[];for(const t of valid){let best=null,bd=Infinity;for(const g of gs){const dd=dist(lat(t),lng(t),g.lat,g.lng);if(dd<=SAME_POINT_M&&dd<bd){best=g;bd=dd;}}if(best){best.trips.push(t);const n=best.trips.length;best.lat=(best.lat*(n-1)+lat(t))/n;best.lng=(best.lng*(n-1)+lng(t))/n;}else gs.push({group_id:'G'+gs.length+'_'+t.trip_id,lat:lat(t),lng:lng(t),trips:[t]});}for(const g of gs){g.trips.sort((a,b)=>tms(b)-tms(a));g.latest=g.trips[0];g.count=g.trips.length;g.distance_m=currentPos?dist(Number(currentPos.lat),Number(currentPos.lng),g.lat,g.lng):null;g.latest_ms=tms(g.latest);}return gs.sort((a,b)=>currentPos?((a.distance_m??Infinity)-(b.distance_m??Infinity)):(b.latest_ms-a.latest_ms));}
+function makeGroups(trips){
+  const valid=trips.filter(x=>validLatLng(lat(x),lng(x))).slice().sort((a,b)=>tms(b)-tms(a));
+  const gs=[];
+
+  for(const t of valid){
+    let best=null,bd=Infinity;
+
+    for(const g of gs){
+      const limit=groupAcceptDistanceForTrip(g,t);
+      if(limit < 0) continue;
+
+      const dd=dist(lat(t),lng(t),g.lat,g.lng);
+      if(dd<=limit && dd<bd){
+        best=g;
+        bd=dd;
+      }
+    }
+
+    if(best){
+      best.trips.push(t);
+      const n=best.trips.length;
+      best.lat=(best.lat*(n-1)+lat(t))/n;
+      best.lng=(best.lng*(n-1)+lng(t))/n;
+    }else{
+      gs.push({group_id:'G'+gs.length+'_'+t.trip_id,lat:lat(t),lng:lng(t),trips:[t]});
+    }
+  }
+
+  for(const g of gs){
+    g.trips.sort((a,b)=>tms(b)-tms(a));
+    g.latest=g.trips[0];
+    g.count=g.trips.length;
+    g.distance_m=currentPos?dist(Number(currentPos.lat),Number(currentPos.lng),g.lat,g.lng):null;
+    g.latest_ms=tms(g.latest);
+  }
+
+  return gs.sort((a,b)=>currentPos?((a.distance_m??Infinity)-(b.distance_m??Infinity)):(b.latest_ms-a.latest_ms));
+}
 function markerClass(g){if(selectedGroupId===g.group_id)return'cluster selected';if(g.distance_m!==null&&g.distance_m<=SAME_POINT_M)return'cluster near20';if(g.distance_m!==null&&g.distance_m<=SAME_AREA_M)return'cluster near100';return'cluster';}
 function popup(g){const trips=(g.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));const dates=trips.map(t=>`<a class="popupBtn" href="#" data-popup-group-id="${esc(g.group_id)}" data-popup-trip-id="${esc(t.trip_id)}">${esc(fmtTime(tms(t)).split(' ')[0])}</a>`).join(' ');return`<div class="popupTitle">この地点の過去 ${g.count}回</div><div class="popupMeta">見たい日付を選択してください。</div>${dates||'<div class="popupMeta">履歴がありません。</div>'}`;}
 function ensureFrontDetailBox(){let o=document.getElementById('frontTripDetailOverlay');if(o)return o;o=document.createElement('div');o.id='frontTripDetailOverlay';o.style.cssText='display:none;position:fixed;z-index:99999;left:10px;right:10px;top:10px;max-height:86vh;overflow:auto;background:#fff;color:#0f172a;border:3px solid #0b84ff;border-radius:18px;box-shadow:0 18px 60px rgba(0,0,0,.45);padding:14px;';document.body.appendChild(o);return o;}
