@@ -220,7 +220,7 @@ async function v11_makeMapLinkPayload(){
       place_name:String(t.point_name||t.lake_name||''),
       line_no:String(t.line_no||''),
       sinker_g:String(t.sinker_g||''),
-      // 過去履歴の水深は、現在sidの魚探水深ではないためPico Wへ渡さない。
+      // 過去履歴の水深は、現在ポイントの魚探水深ではないためPico Wへ渡さない。
       fishfinder_m:'',
       fishfinder_depth_m:'',
       water_temp_c:String(t.water_temp_c||''),
@@ -405,7 +405,11 @@ function v112_makePicoSummary(p){
     v:1,
     source:'pico_log',
     sid:String(p.sid || ''),
+    point_visit_id:String(p.point_visit_id || p.map_point_key || ''),
+    map_point_key:String(p.map_point_key || p.point_visit_id || ''),
     map_spot_id:String(p.map_spot_id || p.spot_id || ''),
+    point_start_seq:p.point_start_seq === undefined ? '' : p.point_start_seq,
+    point_last_seq:p.point_last_seq === undefined ? '' : p.point_last_seq,
     start_ms:v112_numOrNull(p.start_ms) || 0,
     updated_ms:v112_numOrNull(p.updated_ms) || Date.now(),
     first_recv_ms:v112_numOrNull(p.first_recv_ms) || 0,
@@ -427,21 +431,27 @@ function v112_makePicoSummary(p){
 }
 
 async function v112_findTripForLogSync(p){
-  const sid = String(p && p.sid ? p.sid : '').trim();
-  if(!sid) return null;
-
   const trips = await getAllTrips();
+  const sid = String(p && p.sid ? p.sid : '').trim();
+  const pointKey = String((p && (p.point_visit_id || p.map_point_key)) || '').trim();
 
-  // 第0段階:
-  // map_spot_id一致や20m以内一致では、別日の過去釣行へ統合しない。
-  // 同じsidの履歴だけを更新対象にする。
-  for(const t of trips){
-    if(String(t.pico_sid || '') === sid) return t;
+  // 現在ポイント単位で更新する。
+  // 20m以内一致、map_spot_id一致、sidだけ一致では過去ポイントへ統合しない。
+  if(pointKey){
+    for(const t of trips){
+      if(String(t.point_visit_id || '') === pointKey) return t;
+      if(String(t.map_point_key || '') === pointKey) return t;
+      if(t.pico_summary && String(t.pico_summary.point_visit_id || t.pico_summary.map_point_key || '') === pointKey) return t;
+      if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => String(l.point_visit_id || l.map_point_key || '') === pointKey)) return t;
+    }
+  }
 
-    if(t.pico_summary && String(t.pico_summary.sid || '') === sid) return t;
-
-    if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => String(l.sid || '') === sid)){
-      return t;
+  // 旧互換: pointKeyが無いpayloadだけ、sid完全一致を許す。
+  if(!pointKey && sid){
+    for(const t of trips){
+      if(String(t.pico_sid || '') === sid) return t;
+      if(t.pico_summary && String(t.pico_summary.sid || '') === sid) return t;
+      if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => String(l.sid || '') === sid)) return t;
     }
   }
 
@@ -453,6 +463,7 @@ function v112_makeTripFromLogSync(p){
   const gpsLng = Number(p.gps_lng || p.lng);
   const now = Date.now();
   const sid = String(p.sid || '').trim();
+  const pointKey = String(p.point_visit_id || p.map_point_key || '').trim();
   const incomingDepth = v112_depthMaxText(
     p.fishfinder_depth_m,
     p.max_depth_m,
@@ -460,10 +471,10 @@ function v112_makeTripFromLogSync(p){
   );
 
   return {
-    // map_spot_idをtrip_idに使わない。
-    // 過去地点選択時に、過去trip_idへ現在sidを書き込まないため。
     trip_id:genId('T'),
     pico_sid:sid,
+    point_visit_id:pointKey,
+    map_point_key:pointKey,
     map_spot_id:String(p.map_spot_id || p.spot_id || ''),
     date_ms:v112_numOrNull(p.start_ms) || v112_numOrNull(p.first_recv_ms) || now,
     lat:Number.isFinite(gpsLat) ? gpsLat : 0,
@@ -505,15 +516,17 @@ async function v112_applyLogSyncPayload(p){
   }
 
   const now = Date.now();
+  const pointKey = String(p.point_visit_id || p.map_point_key || '').trim();
   const summary = v112_makePicoSummary(p);
 
   let t = await v112_findTripForLogSync(p);
   if(!t) t = v112_makeTripFromLogSync(p);
 
   t.pico_sid = sid;
+  t.point_visit_id = String(t.point_visit_id || pointKey || '');
+  t.map_point_key = String(t.map_point_key || pointKey || '');
   t.map_spot_id = String(t.map_spot_id || p.map_spot_id || p.spot_id || '');
 
-  // Pico側情報で空欄だけ補完する。手入力済みのライン/シンカー等は上書きしない。
   if(!t.lake_name && p.lake_name) t.lake_name = String(p.lake_name);
   if(!t.point_name && (p.point_name || p.place_name)) t.point_name = String(p.point_name || p.place_name);
   if(!t.line_no && p.line_no) t.line_no = String(p.line_no);
@@ -523,10 +536,8 @@ async function v112_applyLogSyncPayload(p){
   if(!t.wind && (p.wind_dir || p.wind)) t.wind = String(p.wind_dir || p.wind);
   if(!t.memo && p.note) t.memo = String(p.note);
 
-  // 第0段階の水深更新:
-  // 0mは登録しない。
-  // 同じsid内でのみ、既存値とincoming値を比較して深い値へ更新する。
-  // 20m以内の別釣行・過去履歴の水深は比較対象にしない。
+  // 水深は現在ポイント内だけで深い方へ更新する。
+  // 0mは登録しない。20m以内の別ポイント・過去履歴の値は比較しない。
   const incomingDepth = v112_depthMaxText(
     p.fishfinder_depth_m,
     p.max_depth_m,
@@ -543,7 +554,7 @@ async function v112_applyLogSyncPayload(p){
   }
 
   t.pico_logs = Array.isArray(t.pico_logs) ? t.pico_logs : [];
-  t.pico_logs = t.pico_logs.filter(x => String(x.sid || '') !== sid);
+  t.pico_logs = t.pico_logs.filter(x => String(x.point_visit_id || x.map_point_key || '') !== pointKey);
   t.pico_logs.push(summary);
   t.pico_summary = summary;
 
