@@ -220,7 +220,9 @@ async function v11_makeMapLinkPayload(){
       place_name:String(t.point_name||t.lake_name||''),
       line_no:String(t.line_no||''),
       sinker_g:String(t.sinker_g||''),
-      fishfinder_m:String(t.fishfinder_depth_m||t.fishfinder_m||''),
+      // 過去履歴の水深は、現在sidの魚探水深ではないためPico Wへ渡さない。
+      fishfinder_m:'',
+      fishfinder_depth_m:'',
       water_temp_c:String(t.water_temp_c||''),
       note:String(t.memo||''),
       history_date_ms:Number(t.date_ms||t.start_ms||0),
@@ -241,6 +243,7 @@ async function v11_makeMapLinkPayload(){
       line_no:'',
       sinker_g:'',
       fishfinder_m:'',
+      fishfinder_depth_m:'',
       water_temp_c:'',
       note:'地図アプリ現在地から連携',
       linked_ms:Date.now()
@@ -377,121 +380,192 @@ try{
   };
 }catch(e){}
 
+function v112_numOrNull(v){
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function v112_depthNum(v){
+  const n = Number(v);
+  return (Number.isFinite(n) && n > 0) ? n : null;
+}
+
+function v112_depthMaxText(){
+  let best = null;
+  for(const v of arguments){
+    const n = v112_depthNum(v);
+    if(n === null) continue;
+    if(best === null || n > best) best = n;
+  }
+  return best === null ? '' : best.toFixed(3);
+}
+
+function v112_makePicoSummary(p){
+  return {
+    v:1,
+    source:'pico_log',
+    sid:String(p.sid || ''),
+    map_spot_id:String(p.map_spot_id || p.spot_id || ''),
+    start_ms:v112_numOrNull(p.start_ms) || 0,
+    updated_ms:v112_numOrNull(p.updated_ms) || Date.now(),
+    first_recv_ms:v112_numOrNull(p.first_recv_ms) || 0,
+    last_recv_ms:v112_numOrNull(p.last_recv_ms) || 0,
+    fish_count:v112_numOrNull(p.fish_count) || 0,
+    mark_count:v112_numOrNull(p.mark_count) || 0,
+    tlog_count:v112_numOrNull(p.tlog_count) || 0,
+    first_seq:p.first_seq === undefined ? '' : p.first_seq,
+    last_seq:p.last_seq === undefined ? '' : p.last_seq,
+    first_t_ms:p.first_t_ms === undefined ? '' : p.first_t_ms,
+    last_t_ms:p.last_t_ms === undefined ? '' : p.last_t_ms,
+    min_depth_m:p.min_depth_m === undefined ? '' : String(p.min_depth_m),
+    max_depth_m:p.max_depth_m === undefined ? '' : String(p.max_depth_m),
+    depth_source:p.depth_source === undefined ? '' : String(p.depth_source),
+    used_sasoi:p.used_sasoi === undefined ? '' : String(p.used_sasoi),
+    used_speed:p.used_speed === undefined ? '' : String(p.used_speed),
+    received_ms:Date.now()
+  };
+}
+
 async function v112_findTripForLogSync(p){
-  const trips=await getAllTrips();
-  const sid=String(p.sid||'');
-  const spotId=String(p.map_spot_id||p.spot_id||'');
-  if(spotId){
-    let t=trips.find(x=>String(x.trip_id||'')===spotId || String(x.migrated_from||'')===spotId || String(x.map_spot_id||'')===spotId);
-    if(t) return t;
-  }
-  if(sid){
-    let t=trips.find(x=>Array.isArray(x.pico_logs)&&x.pico_logs.some(l=>String(l.sid||'')===sid));
-    if(t) return t;
-  }
-  const lat=Number(p.gps_lat||p.lat);
-  const lng=Number(p.gps_lng||p.lng);
-  if(Number.isFinite(lat)&&Number.isFinite(lng)){
-    let best=null, bestD=Infinity;
-    for(const t of trips){
-      const d=dBase(t,lat,lng);
-      if(d!==null && d<bestD){ best=t; bestD=d; }
+  const sid = String(p && p.sid ? p.sid : '').trim();
+  if(!sid) return null;
+
+  const trips = await getAllTrips();
+
+  // 第0段階:
+  // map_spot_id一致や20m以内一致では、別日の過去釣行へ統合しない。
+  // 同じsidの履歴だけを更新対象にする。
+  for(const t of trips){
+    if(String(t.pico_sid || '') === sid) return t;
+
+    if(t.pico_summary && String(t.pico_summary.sid || '') === sid) return t;
+
+    if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => String(l.sid || '') === sid)){
+      return t;
     }
-    if(best && bestD<=20) return best;
   }
+
   return null;
 }
+
 function v112_makeTripFromLogSync(p){
-  const lat=Number(p.gps_lat||p.lat);
-  const lng=Number(p.gps_lng||p.lng);
-  const now=Date.now();
+  const gpsLat = Number(p.gps_lat || p.lat);
+  const gpsLng = Number(p.gps_lng || p.lng);
+  const now = Date.now();
+  const sid = String(p.sid || '').trim();
+  const incomingDepth = v112_depthMaxText(
+    p.fishfinder_depth_m,
+    p.max_depth_m,
+    p.fishfinder_m
+  );
+
   return {
-    trip_id:String(p.map_spot_id||p.spot_id||('PICO_'+(p.sid||now))),
-    map_spot_id:String(p.map_spot_id||p.spot_id||''),
-    date_ms:Number(p.start_ms||p.first_recv_ms||now),
-    lat:Number.isFinite(lat)?lat:0,
-    lng:Number.isFinite(lng)?lng:0,
-    accuracy_m:Number(p.gps_acc_m||p.acc||0),
-    location_time_ms:Number(p.gps_ms||p.start_ms||now),
-    lake_name:String(p.lake_name||''),
-    point_name:String(p.point_name||p.place_name||'Pico Wログ地点'),
-    line_no:String(p.line_no||''),
-    sinker_g:String(p.sinker_g||''),
-    fishfinder_depth_m:String(p.fishfinder_m||p.fishfinder_depth_m||''),
-    water_temp_c:String(p.water_temp_c||''),
-    weather:String(p.weather_text||p.weather||''),
-    wind:String(p.wind_dir||p.wind||''),
-    memo:String(p.note||''),
+    // map_spot_idをtrip_idに使わない。
+    // 過去地点選択時に、過去trip_idへ現在sidを書き込まないため。
+    trip_id:genId('T'),
+    pico_sid:sid,
+    map_spot_id:String(p.map_spot_id || p.spot_id || ''),
+    date_ms:v112_numOrNull(p.start_ms) || v112_numOrNull(p.first_recv_ms) || now,
+    lat:Number.isFinite(gpsLat) ? gpsLat : 0,
+    lng:Number.isFinite(gpsLng) ? gpsLng : 0,
+    accuracy_m:v112_numOrNull(p.gps_acc_m || p.acc) || 0,
+    location_time_ms:v112_numOrNull(p.gps_ms) || v112_numOrNull(p.start_ms) || now,
+    lake_name:String(p.lake_name || ''),
+    point_name:String(p.point_name || p.place_name || 'Pico Wログ地点'),
+    line_no:String(p.line_no || ''),
+    sinker_g:String(p.sinker_g || ''),
+    fishfinder_depth_m:incomingDepth,
+    water_temp_c:String(p.water_temp_c || ''),
+    weather:String(p.weather_text || p.weather || ''),
+    wind:String(p.wind_dir || p.wind || ''),
+    memo:String(p.note || ''),
+    pico_logs:[],
     created_ms:now,
     updated_ms:now
   };
 }
+
 async function v112_applyLogSyncPayload(p){
   if(!p || p.__error){
     v112_setLogSync('logsync decode error','bad');
     return false;
   }
-  const lat=Number(p.gps_lat||p.lat);
-  const lng=Number(p.gps_lng||p.lng);
-  if(!Number.isFinite(lat)||!Number.isFinite(lng)){
+
+  const sid = String(p.sid || '').trim();
+  if(!sid){
+    v112_setLogSync('sidなし','bad');
+    return false;
+  }
+
+  const lat = Number(p.gps_lat || p.lat);
+  const lng = Number(p.gps_lng || p.lng);
+  if(!Number.isFinite(lat) || !Number.isFinite(lng)){
     v112_setLogSync('logsync 座標なし','bad');
     return false;
   }
-  let t=await v112_findTripForLogSync(p);
-  if(!t) t=v112_makeTripFromLogSync(p);
 
-  const summary={
-    v:1,
-    source:'pico_log',
-    sid:String(p.sid||''),
-    map_spot_id:String(p.map_spot_id||p.spot_id||''),
-    start_ms:Number(p.start_ms||0),
-    updated_ms:Number(p.updated_ms||Date.now()),
-    first_recv_ms:Number(p.first_recv_ms||0),
-    last_recv_ms:Number(p.last_recv_ms||0),
-    fish_count:Number(p.fish_count||0),
-    mark_count:Number(p.mark_count||0),
-    tlog_count:Number(p.tlog_count||0),
-    first_seq:p.first_seq,
-    last_seq:p.last_seq,
-    first_t_ms:p.first_t_ms,
-    last_t_ms:p.last_t_ms,
-    min_depth_m:p.min_depth_m,
-    max_depth_m:p.max_depth_m,
-    used_sasoi:p.used_sasoi,
-    used_speed:p.used_speed,
-    received_ms:Date.now()
-  };
+  const now = Date.now();
+  const summary = v112_makePicoSummary(p);
 
-  t.map_spot_id=t.map_spot_id||summary.map_spot_id;
-  t.pico_logs=Array.isArray(t.pico_logs)?t.pico_logs:[];
-  t.pico_logs=t.pico_logs.filter(x=>String(x.sid||'')!==String(summary.sid||''));
+  let t = await v112_findTripForLogSync(p);
+  if(!t) t = v112_makeTripFromLogSync(p);
+
+  t.pico_sid = sid;
+  t.map_spot_id = String(t.map_spot_id || p.map_spot_id || p.spot_id || '');
+
+  // Pico側情報で空欄だけ補完する。手入力済みのライン/シンカー等は上書きしない。
+  if(!t.lake_name && p.lake_name) t.lake_name = String(p.lake_name);
+  if(!t.point_name && (p.point_name || p.place_name)) t.point_name = String(p.point_name || p.place_name);
+  if(!t.line_no && p.line_no) t.line_no = String(p.line_no);
+  if(!t.sinker_g && p.sinker_g) t.sinker_g = String(p.sinker_g);
+  if(!t.water_temp_c && p.water_temp_c) t.water_temp_c = String(p.water_temp_c);
+  if(!t.weather && (p.weather_text || p.weather)) t.weather = String(p.weather_text || p.weather);
+  if(!t.wind && (p.wind_dir || p.wind)) t.wind = String(p.wind_dir || p.wind);
+  if(!t.memo && p.note) t.memo = String(p.note);
+
+  // 第0段階の水深更新:
+  // 0mは登録しない。
+  // 同じsid内でのみ、既存値とincoming値を比較して深い値へ更新する。
+  // 20m以内の別釣行・過去履歴の水深は比較対象にしない。
+  const incomingDepth = v112_depthMaxText(
+    p.fishfinder_depth_m,
+    p.max_depth_m,
+    p.fishfinder_m
+  );
+
+  const mergedDepth = v112_depthMaxText(
+    t.fishfinder_depth_m,
+    incomingDepth
+  );
+
+  if(mergedDepth){
+    t.fishfinder_depth_m = mergedDepth;
+  }
+
+  t.pico_logs = Array.isArray(t.pico_logs) ? t.pico_logs : [];
+  t.pico_logs = t.pico_logs.filter(x => String(x.sid || '') !== sid);
   t.pico_logs.push(summary);
-  t.pico_summary=summary;
+  t.pico_summary = summary;
 
-  // Pico側情報で空欄を補完する。既存の手入力情報は上書きしない。
-  if(!t.lake_name && p.lake_name) t.lake_name=String(p.lake_name);
-  if(!t.point_name && (p.point_name||p.place_name)) t.point_name=String(p.point_name||p.place_name);
-  if(!t.line_no && p.line_no) t.line_no=String(p.line_no);
-  if(!t.sinker_g && p.sinker_g) t.sinker_g=String(p.sinker_g);
-  if(!t.fishfinder_depth_m && (p.fishfinder_m||p.fishfinder_depth_m)) t.fishfinder_depth_m=String(p.fishfinder_m||p.fishfinder_depth_m);
-  if(!t.water_temp_c && p.water_temp_c) t.water_temp_c=String(p.water_temp_c);
-  if(!t.memo && p.note) t.memo=String(p.note);
-  t.updated_ms=Date.now();
+  t.updated_ms = now;
 
   await putTrip(t);
-  selectedTripId=t.trip_id;
+  selectedTripId = t.trip_id;
 
   if(history && history.replaceState){
-    history.replaceState(null,document.title,location.pathname + location.search);
+    history.replaceState(null, document.title, location.pathname + location.search);
   }
+
   await refreshAll();
+
   try{
-    showTripDetail(t,{lat:Number(t.lat),lng:Number(t.lng)});
+    showTripDetail(t, {lat:Number(t.lat), lng:Number(t.lng)});
   }catch(e){}
+
   try{
     fitInitialLakeViewOnce(true);
   }catch(e){}
+
   v112_setLogSync('同期済み','good');
   return true;
 }
