@@ -29,7 +29,12 @@ function dist(lat1,lng1,lat2,lng2){const R=6371008.8,r=v=>v*Math.PI/180;const p1
 function setBadge(id,text,cls=''){const el=$(id); if(!el)return; el.textContent=text; el.className=(id==='secureBadge'?'badge ':'pill ')+cls;}
 function title(t){return t.point_name||t.lake_name||'釣行地点';}
 function lat(t){return Number(t.lat);} function lng(t){return Number(t.lng);} function tms(t){return Number(t.date_ms||t.start_ms||t.created_ms||0);}
-function sub(t){return `ライン ${esc(t.line_no||'-')} / シンカー ${esc(t.sinker_g||'-')}g / 魚探 ${esc(t.fishfinder_depth_m||'-')}m / 水温 ${esc(t.water_temp_c||'-')}℃`;}
+function tripDepthText(t){
+  if(t && String(t.depth_status||'')==='not_measured') return '未底取り';
+  const v=t && t.fishfinder_depth_m!==undefined && t.fishfinder_depth_m!==null ? String(t.fishfinder_depth_m).trim() : '';
+  return v ? (v+'m') : '-';
+}
+function sub(t){return `ライン ${esc(t.line_no||'-')} / シンカー ${esc(t.sinker_g||'-')}g / 魚探 ${esc(tripDepthText(t))} / 水温 ${esc(t.water_temp_c||'-')}℃`;}
 function dCurrent(t){if(!currentPos)return null; return dist(Number(currentPos.lat),Number(currentPos.lng),lat(t),lng(t));}
 function dBase(t,a,b){if(!validLatLng(Number(a),Number(b))||!validLatLng(lat(t),lng(t)))return null; return dist(Number(a),Number(b),lat(t),lng(t));}
 
@@ -67,7 +72,7 @@ function clearForm(){editingTripId=null;$('tripDate').value=toLocal(nowMs());['l
 async function saveTrip(){if(!currentPos){alert('現在地がありません。');return;}const f=readForm(),now=nowMs();const trips=await getAllTrips();const near=trips.filter(t=>dBase(t,currentPos.lat,currentPos.lng)!==null&&dBase(t,currentPos.lat,currentPos.lng)<=SAME_POINT_M);if(near.length>0&&!confirm(`20m以内に過去履歴が${near.length}件あります。この場所の新しい釣行回として保存しますか？`))return;const t={trip_id:genId('T'),...f,lat:Number(currentPos.lat),lng:Number(currentPos.lng),accuracy_m:Number(currentPos.acc||0),location_time_ms:Number(currentPos.t||now),created_ms:now,updated_ms:now};await putTrip(t);selectedTripId=t.trip_id;setBadge('saveBadge','保存済み','good');await refreshAll();await selectTrip(t.trip_id);}
 async function updateTrip(){if(!editingTripId){alert('上書き対象がありません。');return;}const trips=await getAllTrips();const old=trips.find(x=>x.trip_id===editingTripId);if(!old)return;const t={...old,...readForm(),updated_ms:nowMs()};await putTrip(t);editingTripId=null;$('btnUpdateTrip').disabled=true;setBadge('saveBadge','上書き済み','good');await refreshAll();await selectTrip(t.trip_id);}
 
-function detailHtml(t,base=null){let dd='-';if(base){const d=dBase(t,base.lat,base.lng);if(d!==null)dd=Math.round(d)+'m';}else if(currentPos){const d=dCurrent(t);if(d!==null)dd='現在地から '+Math.round(d)+'m';}return`<div class="kv"><b>日時</b><span>${esc(fmtTime(t.date_ms))}</span><b>距離</b><span>${esc(dd)}</span><b>湖名</b><span>${esc(t.lake_name||'-')}</span><b>ポイント名</b><span>${esc(t.point_name||'-')}</span><b>座標</b><span>${Number(t.lat).toFixed(7)}, ${Number(t.lng).toFixed(7)}</span><b>ライン</b><span>${esc(t.line_no||'-')}</span><b>シンカー</b><span>${esc(t.sinker_g||'-')}g</span><b>魚探水深</b><span>${esc(t.fishfinder_depth_m||'-')}m</span><b>水温</b><span>${esc(t.water_temp_c||'-')}℃</span><b>天気</b><span>${esc(t.weather||'-')}</span><b>風</b><span>${esc(t.wind||'-')}</span><b>メモ</b><span>${esc(t.memo||'-')}</span></div>`;}
+function detailHtml(t,base=null){let dd='-';if(base){const d=dBase(t,base.lat,base.lng);if(d!==null)dd=Math.round(d)+'m';}else if(currentPos){const d=dCurrent(t);if(d!==null)dd='現在地から '+Math.round(d)+'m';}return`<div class="kv"><b>日時</b><span>${esc(fmtTime(t.date_ms))}</span><b>距離</b><span>${esc(dd)}</span><b>湖名</b><span>${esc(t.lake_name||'-')}</span><b>ポイント名</b><span>${esc(t.point_name||'-')}</span><b>座標</b><span>${Number(t.lat).toFixed(7)}, ${Number(t.lng).toFixed(7)}</span><b>ライン</b><span>${esc(t.line_no||'-')}</span><b>シンカー</b><span>${esc(t.sinker_g||'-')}g</span><b>魚探水深</b><span>${esc(tripDepthText(t))}</span><b>水温</b><span>${esc(t.water_temp_c||'-')}℃</span><b>天気</b><span>${esc(t.weather||'-')}</span><b>風</b><span>${esc(t.wind||'-')}</span><b>メモ</b><span>${esc(t.memo||'-')}</span></div>`;}
 function itemHtml(t,label,base,sel=false){const d=base?dBase(t,base.lat,base.lng):dCurrent(t);const cls=d!==null&&d<=SAME_POINT_M?' near20':(d!==null&&d<=SAME_AREA_M?' near100':'');return`<div class="item${sel?' selected':''}${cls}"><div class="top"><span>${esc(title(t))}</span><span>${esc(label)} ${d!==null?Math.round(d)+'m':''}</span></div><div class="body">${esc(fmtTime(tms(t)))}<br>${sub(t)}<br>${esc(t.memo||'')}</div><button data-trip-id="${esc(t.trip_id)}">この釣行回を表示</button></div>`;}
 async function selectGroup(id){if(groups.length===0)groups=makeGroups(await getAllTrips());const g=groups.find(x=>x.group_id===id);if(!g)return;selectedGroupId=id;selectedTripId=g.latest.trip_id;await renderMap();renderPointHistory(g,g.latest.trip_id);showTripDetail(g.latest,{lat:g.lat,lng:g.lng});drawSelected(g.lat,g.lng);map.setView([g.lat,g.lng],18);}
 async function selectTrip(id){const trips=await getAllTrips();const t=trips.find(x=>x.trip_id===id);if(!t)return;groups=makeGroups(trips);const g=groups.find(gr=>gr.trips.some(x=>x.trip_id===id))||{group_id:'single_'+id,lat:lat(t),lng:lng(t),trips:[t],latest:t,count:1};selectedGroupId=g.group_id;selectedTripId=id;await renderMap();renderPointHistory(g,id);showTripDetail(t,{lat:g.lat,lng:g.lng});drawSelected(g.lat,g.lng);map.setView([lat(t),lng(t)],18);}
@@ -424,6 +429,8 @@ function v112_makePicoSummary(p){
     min_depth_m:p.min_depth_m === undefined ? '' : String(p.min_depth_m),
     max_depth_m:p.max_depth_m === undefined ? '' : String(p.max_depth_m),
     depth_source:p.depth_source === undefined ? '' : String(p.depth_source),
+    depth_status:p.depth_status === undefined ? '' : String(p.depth_status),
+    depth_measured:p.depth_measured === undefined ? '' : String(p.depth_measured),
     used_sasoi:p.used_sasoi === undefined ? '' : String(p.used_sasoi),
     used_speed:p.used_speed === undefined ? '' : String(p.used_speed),
     received_ms:Date.now()
@@ -486,6 +493,8 @@ function v112_makeTripFromLogSync(p){
     line_no:String(p.line_no || ''),
     sinker_g:String(p.sinker_g || ''),
     fishfinder_depth_m:incomingDepth,
+    depth_status:incomingDepth ? 'measured' : 'not_measured',
+    depth_last_sync_ms:now,
     water_temp_c:String(p.water_temp_c || ''),
     weather:String(p.weather_text || p.weather || ''),
     wind:String(p.wind_dir || p.wind || ''),
@@ -549,9 +558,16 @@ async function v112_applyLogSyncPayload(p){
     incomingDepth
   );
 
-  if(mergedDepth){
+  if(incomingDepth){
+    // この同期で底取り済みの深度が来た場合だけ、深い方へ更新する。
     t.fishfinder_depth_m = mergedDepth;
+    t.depth_status = 'measured';
+  }else{
+    // この同期で有効な深度が無い場合は、現在表示を未底取り扱いにする。
+    // 既存の fishfinder_depth_m 自体は消さない。次に深度が来れば深い方へ更新できる。
+    t.depth_status = 'not_measured';
   }
+  t.depth_last_sync_ms = now;
 
   t.pico_logs = Array.isArray(t.pico_logs) ? t.pico_logs : [];
   t.pico_logs = t.pico_logs.filter(x => String(x.point_visit_id || x.map_point_key || '') !== pointKey);
