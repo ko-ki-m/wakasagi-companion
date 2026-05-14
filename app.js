@@ -785,10 +785,7 @@ function v11_enableLinkButton(){
 function v111_applyPicoParam(){
   try{
     const p=new URLSearchParams(location.search);
-    // 復旧版:
-    // autolink=1 では自動でPico Wへ戻らない。
-    // 前回位置 last_pos を現在地として誤連携する事故を防ぐため、
-    // 自動連携フラグは立てない。
+    if(p.get('autolink')==='1') sessionStorage.setItem('wakasagi_autolink_once','1');
     if(p.get('linked')==='1') sessionStorage.setItem('wakasagi_linked_notice','1');
     const pico=p.get('pico');
     if(!pico) return;
@@ -1072,28 +1069,67 @@ async function v112_initLogSyncReceiver(){
 window.addEventListener('load',()=>setTimeout(v112_initLogSyncReceiver,1400));
 
 // ============================================================
-// v11.3: Auto link mode DISABLED for restore
+// v11.3: Auto link mode
 // ============================================================
-// 復旧版:
-// 自動GPS連携は無効化する。
-// 理由:
-// GPS取得失敗時に last_pos（前回位置）が currentPos に入り、
-// それを現在地としてPico Wへ戻す危険を完全に避けるため。
-// 手動の「現在地を記録」ボタンは v11_linkToPicoLog() として残す。
 function v113_autoBadge(text,cls){
   const b=document.getElementById('autoLinkBadge');
   const s=document.getElementById('autoLinkStatus');
   if(b){ b.textContent=text; b.className='pill '+(cls||''); }
   if(s) s.textContent=text;
 }
-function v113_runAutoLinkIfRequested(){
+function v113_currentUrlWithoutAuto(){
   try{
-    sessionStorage.removeItem('wakasagi_autolink_once');
-  }catch(e){}
+    const u=new URL(location.href);
+    u.searchParams.delete('autolink');
+    u.searchParams.set('linked','1');
+    return u.origin + u.pathname + u.search;
+  }catch(e){
+    return location.origin + location.pathname + '?linked=1';
+  }
+}
+try{
+  const v113_originalMakeMapLinkPayload = v11_makeMapLinkPayload;
+  v11_makeMapLinkPayload = async function(){
+    const p = await v113_originalMakeMapLinkPayload();
+    if(p){
+      p.auto_link = 1;
+      p.return_url = v113_currentUrlWithoutAuto();
+    }
+    return p;
+  };
+}catch(e){}
+async function v113_waitForCurrentPos(maxMs){
+  const start=Date.now();
+  while(Date.now()-start < maxMs){
+    try{
+      if(typeof currentPos !== 'undefined' && currentPos && Number.isFinite(Number(currentPos.lat)) && Number.isFinite(Number(currentPos.lng))){
+        return true;
+      }
+    }catch(e){}
+    await new Promise(r=>setTimeout(r,500));
+  }
   return false;
 }
+async function v113_runAutoLinkIfRequested(){
+  if(sessionStorage.getItem('wakasagi_linked_notice')==='1'){
+    sessionStorage.removeItem('wakasagi_linked_notice');
+    v113_autoBadge('連携済み','good');
+    v11_setLinkBadge && v11_setLinkBadge('連携済み','good');
+    return;
+  }
+  if(sessionStorage.getItem('wakasagi_autolink_once')!=='1') return;
+  sessionStorage.removeItem('wakasagi_autolink_once');
+  v113_autoBadge('現在地取得中','warn');
+  const ok=await v113_waitForCurrentPos(18000);
+  if(!ok){
+    v113_autoBadge('現在地取得失敗','bad');
+    v11_setLinkStatus && v11_setLinkStatus('自動連携できません。現在地取得を確認してください。');
+    return;
+  }
+  v113_autoBadge('本体へ自動連携中','warn');
+  await v11_linkToPicoLog();
+}
 window.addEventListener('load',()=>setTimeout(v113_runAutoLinkIfRequested,2200));
-
 
 // ============================================================
 // v11.4: Buttons from GitHub map back to Pico W /log and /remote.
@@ -1163,10 +1199,12 @@ window.addEventListener('load',()=>setTimeout(v1155_checkOfflineReady,2600));
 // v11.6: Offline GPS link notice
 // ============================================================
 function v116_isAutoLinkRequested(){
-  // 復旧版:
-  // 自動連携は完全に無効化する。
-  // ?autolink=1 が付いていても、前回位置を使ってPico Wへ戻らない。
-  return false;
+  try{
+    const p=new URLSearchParams(location.search);
+    return p.get('autolink')==='1' || sessionStorage.getItem('wakasagi_autolink_once')==='1';
+  }catch(e){
+    return sessionStorage.getItem('wakasagi_autolink_once')==='1';
+  }
 }
 function v116_setOfflineGpsNotice(){
   try{
