@@ -26,33 +26,6 @@ function genId(p){return `${p}${Date.now().toString(36)}${Math.floor(Math.random
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function validLatLng(lat,lng){return Number.isFinite(lat)&&Number.isFinite(lng)&&lat>=-90&&lat<=90&&lng>=-180&&lng<=180;}
 function dist(lat1,lng1,lat2,lng2){const R=6371008.8,r=v=>v*Math.PI/180;const p1=r(lat1),p2=r(lat2),dp=r(lat2-lat1),dl=r(lng2-lng1);const a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
-
-const SAME_DAY_POINT_M = 10;
-function dayKey(t){
-  const d=new Date(tms(t));
-  if(Number.isNaN(d.getTime())) return '';
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-}
-function lakeKey(t){
-  return String(t && t.lake_name ? t.lake_name : '').trim().toLowerCase();
-}
-function sameFishingDayAndLake(a,b){
-  if(dayKey(a)!==dayKey(b)) return false;
-  const la=lakeKey(a), lb=lakeKey(b);
-  if(la && lb) return la===lb;
-  // 湖名未入力の自動連携でも、同日のポイント分割は効かせる。
-  return true;
-}
-function groupAcceptDistanceForTrip(g,t){
-  const trips=Array.isArray(g && g.trips) ? g.trips : [];
-  for(const old of trips){
-    if(!sameFishingDayAndLake(old,t)) continue;
-    const d=dist(lat(old),lng(old),lat(t),lng(t));
-    if(d < SAME_DAY_POINT_M) return SAME_DAY_POINT_M;
-    return -1;
-  }
-  return SAME_POINT_M;
-}
 function setBadge(id,text,cls=''){const el=$(id); if(!el)return; el.textContent=text; el.className=(id==='secureBadge'?'badge ':'pill ')+cls;}
 function title(t){return t.point_name||t.lake_name||'釣行地点';}
 function lat(t){return Number(t.lat);} function lng(t){return Number(t.lng);} function tms(t){return Number(t.date_ms||t.start_ms||t.created_ms||0);}
@@ -78,46 +51,9 @@ function normalizeOld(s){const a=Number(s.lat),b=Number(s.lng); if(!validLatLng(
 function openOld(){return new Promise(res=>{const r=indexedDB.open(OLD_DB_NAME);r.onsuccess=()=>res(r.result);r.onerror=()=>res(null);r.onblocked=()=>res(null);});}
 async function migrateOld(force=false){if(!force && await metaGet('old_migrated'))return 0;let old=await openOld();if(!old||!old.objectStoreNames.contains(OLD_STORE_SPOTS)){await metaSet('old_migrated',true);return 0;}const rows=await new Promise(res=>{const r=old.transaction(OLD_STORE_SPOTS,'readonly').objectStore(OLD_STORE_SPOTS).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([]);});let c=0;const cur=await getAllTrips();const exist=new Set(cur.map(x=>String(x.migrated_from||x.trip_id)));for(const row of rows){const t=normalizeOld(row);if(!t)continue;if(!force&&exist.has(String(t.migrated_from||t.trip_id)))continue;await putTrip(t);c++;}await metaSet('old_migrated',true);return c;}
 
-function ensureMap(){if(map)return true;if(!window.L){$('mapStatus').textContent='地図ライブラリ未読込';return false;}map=L.map('map',{zoomControl:true}).setView(DEFAULT_CENTER,5);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},100);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},600);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);groupLayer=L.layerGroup().addTo(map);return true;}
+function ensureMap(){if(map)return true;if(!window.L){$('mapStatus').textContent='地図ライブラリ未読込（オフラインGPS連携は可）';return false;}map=L.map('map',{zoomControl:true}).setView(DEFAULT_CENTER,5);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},100);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},600);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);groupLayer=L.layerGroup().addTo(map);return true;}
 function drawCurrent(zoomNow=false){if(!currentPos||!ensureMap())return;const a=Number(currentPos.lat),b=Number(currentPos.lng),acc=Number(currentPos.acc||0);[currentMarker,accCircle,cur20,cur100].forEach(x=>{if(x)x.remove();});currentMarker=L.marker([a,b]).addTo(map).bindPopup('現在地');if(acc>0)accCircle=L.circle([a,b],{radius:acc}).addTo(map);cur20=L.circle([a,b],{radius:SAME_POINT_M,weight:2,fillOpacity:.04}).addTo(map);cur100=L.circle([a,b],{radius:SAME_AREA_M,weight:2,fillOpacity:.015}).addTo(map);if(zoomNow)map.setView([a,b],19);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},50);$('btnFitNear').disabled=false;$('btnSaveScroll').disabled=false;$('btnSaveTrip').disabled=false;}
-function makeGroups(trips){
-  const valid=trips.filter(x=>validLatLng(lat(x),lng(x))).slice().sort((a,b)=>tms(b)-tms(a));
-  const gs=[];
-
-  for(const t of valid){
-    let best=null,bd=Infinity;
-
-    for(const g of gs){
-      const limit=groupAcceptDistanceForTrip(g,t);
-      if(limit < 0) continue;
-
-      const dd=dist(lat(t),lng(t),g.lat,g.lng);
-      if(dd<=limit && dd<bd){
-        best=g;
-        bd=dd;
-      }
-    }
-
-    if(best){
-      best.trips.push(t);
-      const n=best.trips.length;
-      best.lat=(best.lat*(n-1)+lat(t))/n;
-      best.lng=(best.lng*(n-1)+lng(t))/n;
-    }else{
-      gs.push({group_id:'G'+gs.length+'_'+t.trip_id,lat:lat(t),lng:lng(t),trips:[t]});
-    }
-  }
-
-  for(const g of gs){
-    g.trips.sort((a,b)=>tms(b)-tms(a));
-    g.latest=g.trips[0];
-    g.count=g.trips.length;
-    g.distance_m=currentPos?dist(Number(currentPos.lat),Number(currentPos.lng),g.lat,g.lng):null;
-    g.latest_ms=tms(g.latest);
-  }
-
-  return gs.sort((a,b)=>currentPos?((a.distance_m??Infinity)-(b.distance_m??Infinity)):(b.latest_ms-a.latest_ms));
-}
+function makeGroups(trips){const valid=trips.filter(x=>validLatLng(lat(x),lng(x))).slice().sort((a,b)=>tms(b)-tms(a));const gs=[];for(const t of valid){let best=null,bd=Infinity;for(const g of gs){const dd=dist(lat(t),lng(t),g.lat,g.lng);if(dd<=SAME_POINT_M&&dd<bd){best=g;bd=dd;}}if(best){best.trips.push(t);const n=best.trips.length;best.lat=(best.lat*(n-1)+lat(t))/n;best.lng=(best.lng*(n-1)+lng(t))/n;}else gs.push({group_id:'G'+gs.length+'_'+t.trip_id,lat:lat(t),lng:lng(t),trips:[t]});}for(const g of gs){g.trips.sort((a,b)=>tms(b)-tms(a));g.latest=g.trips[0];g.count=g.trips.length;g.distance_m=currentPos?dist(Number(currentPos.lat),Number(currentPos.lng),g.lat,g.lng):null;g.latest_ms=tms(g.latest);}return gs.sort((a,b)=>currentPos?((a.distance_m??Infinity)-(b.distance_m??Infinity)):(b.latest_ms-a.latest_ms));}
 function markerClass(g){if(selectedGroupId===g.group_id)return'cluster selected';if(g.distance_m!==null&&g.distance_m<=SAME_POINT_M)return'cluster near20';if(g.distance_m!==null&&g.distance_m<=SAME_AREA_M)return'cluster near100';return'cluster';}
 function popup(g){const trips=(g.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));const dates=trips.map(t=>`<a class="popupBtn" href="#" data-popup-group-id="${esc(g.group_id)}" data-popup-trip-id="${esc(t.trip_id)}">${esc(fmtTime(tms(t)).split(' ')[0])}</a>`).join(' ');return`<div class="popupTitle">この地点の過去 ${g.count}回</div><div class="popupMeta">見たい日付を選択してください。</div>${dates||'<div class="popupMeta">履歴がありません。</div>'}`;}
 function ensureFrontDetailBox(){let o=document.getElementById('frontTripDetailOverlay');if(o)return o;o=document.createElement('div');o.id='frontTripDetailOverlay';o.style.cssText='display:none;position:fixed;z-index:99999;left:10px;right:10px;top:10px;max-height:86vh;overflow:auto;background:#fff;color:#0f172a;border:3px solid #0b84ff;border-radius:18px;box-shadow:0 18px 60px rgba(0,0,0,.45);padding:14px;';document.body.appendChild(o);return o;}
@@ -187,7 +123,7 @@ function fitNear(){if(!map||!currentPos)return;const pts=[[Number(currentPos.lat
 function downloadBlob(n,t,x){const b=new Blob([x],{type:t});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}
 async function exportDb(){const trips=await getAllTrips();downloadBlob(`wakasagi_map_v10_${Date.now()}.json`,'application/json',JSON.stringify({version:'10',exported_ms:Date.now(),trips},null,2));}
 async function importPayload(payload){const rows=Array.isArray(payload)?payload:(payload.trips||payload.trip_records||payload.spots||[]);if(!Array.isArray(rows))return-1;let c=0;for(const r of rows){let t=r.trip_id?r:normalizeOld(r);if(!t)continue;t.trip_id=t.trip_id||genId('T');t.date_ms=Number(t.date_ms||t.start_ms||nowMs());t.lat=Number(t.lat);t.lng=Number(t.lng);if(!validLatLng(t.lat,t.lng))continue;t.updated_ms=nowMs();await putTrip(t);c++;}return c;}
-async function initPwa(){if('serviceWorker'in navigator){try{await navigator.serviceWorker.register('./service-worker.js?v=10');}catch(e){}}}
+async function initPwa(){if('serviceWorker'in navigator){try{const reg=await navigator.serviceWorker.register('./service-worker.js?v=auto_gps_20260514');try{await reg.update();}catch(e){}}catch(e){}}}
 async function init(){hidePointHistoryCard();hideSelectedTripDetailCard();if(window.isSecureContext)setBadge('secureBadge','GPS可','good');else setBadge('secureBadge','HTTPS必要','bad');db=await openDb();ensureMap();$('tripDate').value=toLocal(nowMs());const n=await migrateOld(false);if(n>0)$('mapStatus').textContent=`旧データ${n}件を移行しました。`;
 $('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitNear').onclick=fitNear;$('btnSaveScroll').onclick=()=>$('tripDate').scrollIntoView({behavior:'smooth',block:'center'});$('btnSaveTrip').onclick=saveTrip;$('btnLoadSelected').onclick=()=>selectedTripId&&loadToForm(selectedTripId);$('btnUpdateTrip').onclick=updateTrip;$('btnClearForm').onclick=clearForm;$('btnExport').onclick=exportDb;$('btnImport').onclick=()=>$('importFile').click();$('importFile').onchange=async e=>{const f=e.target.files&&e.target.files[0];if(!f)return;let p;try{p=JSON.parse(await f.text());}catch(err){alert('JSONを読めません。');return;}const c=await importPayload(p);alert(`${c}件を読み込みました。`);await refreshAll();};$('btnMigrate').onclick=async()=>{const c=await migrateOld(true);alert(`旧データ移行 ${c}件`);await refreshAll();};$('btnClearDb').onclick=async()=>{if(confirm('テストDBを消去しますか？')){await new Promise(res=>{const tx=db.transaction([STORE_TRIPS,STORE_META],'readwrite');tx.objectStore(STORE_TRIPS).clear();tx.objectStore(STORE_META).clear();tx.oncomplete=()=>res();});location.reload();}};$('searchBox').oninput=renderAllList;$('sortMode').onchange=renderAllList;document.addEventListener('click',ev=>{
   const pd=ev.target.closest('[data-popup-trip-id]');
@@ -348,7 +284,7 @@ function v11_enableLinkButton(){
     ok = ok || !!(typeof currentPos !== 'undefined' && currentPos && Number.isFinite(Number(currentPos.lat)) && Number.isFinite(Number(currentPos.lng)));
   }catch(e){}
   btn.disabled=!ok;
-  if(ok) v11_setLinkStatus('選択地点または現在地をPico Wの現在sidへ連携できます。');
+  if(ok) v11_setLinkStatus('現在地を取得し、Pico Wの現在sidへ記録できます。オンラインなら地図表示、オフラインならGPS連携のみで動きます。');
 }
 
 function v111_applyPicoParam(){
@@ -377,7 +313,11 @@ function v11_initLinkUi(){
     ipEl.addEventListener('change',()=>localStorage.setItem('pico_ip',v11_getPicoIp()));
   }
   const btn=document.getElementById('btnLinkToPico');
-  if(btn) btn.addEventListener('click',v11_linkToPicoLog);
+  if(btn){
+    // 使用者に「地図を開く」と思わせず、AP/STAどちらでも目的が同じになる表示にする。
+    btn.textContent='現在地を記録';
+    btn.addEventListener('click',v11_linkToPicoLog);
+  }
   // 既存UIの選択/現在地更新後にボタン状態を追従させる
   setInterval(v11_enableLinkButton,700);
   v11_enableLinkButton();
@@ -738,6 +678,73 @@ async function v113_runAutoLinkIfRequested(){
   await v11_linkToPicoLog();
 }
 window.addEventListener('load',()=>setTimeout(v113_runAutoLinkIfRequested,2200));
+
+
+
+// ============================================================
+// v11.5.5: Automatic offline-link readiness
+// 目的:
+// - 使用者に「釣行前準備」作業を増やさない。
+// - GitHubアプリを開いた時点で、Service Worker更新とGPS確認状態を自動表示する。
+// - PicoW-Config中は、キャッシュ済みならGPS連携へ自動フォールバックする。
+// ============================================================
+function v1155_setReadyStatus(text,cls){
+  try{
+    const st=document.getElementById('autoLinkStatus') || document.getElementById('linkStatus') || document.getElementById('mapStatus');
+    const bg=document.getElementById('autoLinkBadge') || document.getElementById('linkBadge');
+    if(st) st.textContent=text;
+    if(bg){ bg.textContent=cls==='good'?'連携準備済み':(cls==='warn'?'連携準備中':'要確認'); bg.className='pill '+(cls||''); }
+  }catch(e){}
+}
+async function v1155_checkOfflineReady(){
+  try{
+    if(!('serviceWorker' in navigator)){
+      v1155_setReadyStatus('このブラウザはオフライン連携準備に対応していません。オンライン時の地図連携は使用できます。','warn');
+      return false;
+    }
+    const reg=await navigator.serviceWorker.ready;
+    if(reg){
+      v1155_setReadyStatus('オフラインGPS連携：準備済み。現在地を記録できます。','good');
+      return true;
+    }
+  }catch(e){}
+  v1155_setReadyStatus('オフラインGPS連携：準備中です。インターネット接続中に一度この画面を開くと準備されます。','warn');
+  return false;
+}
+window.addEventListener('load',()=>setTimeout(v1155_checkOfflineReady,2600));
+
+// ============================================================
+// v11.6: Offline GPS link support
+// 目的:
+// - PicoW-Config接続中でも、事前キャッシュ済みのGitHub Pagesを起動する。
+// - Leaflet/地図タイルが読めない時でも、GPS取得→Pico W /log#maplink への自動連携を止めない。
+// - 過去釣行閲覧の地図表示はインターネットありの時だけ通常どおり動かす。
+// ============================================================
+function v116_isAutoLinkRequested(){
+  try{
+    const p=new URLSearchParams(location.search);
+    return p.get('autolink')==='1' || sessionStorage.getItem('wakasagi_autolink_once')==='1';
+  }catch(e){
+    return sessionStorage.getItem('wakasagi_autolink_once')==='1';
+  }
+}
+function v116_setOfflineGpsNotice(){
+  try{
+    const auto=v116_isAutoLinkRequested();
+    const noLeaflet=!window.L;
+    if(auto && noLeaflet){
+      v113_autoBadge && v113_autoBadge('GPS連携モード','warn');
+      v11_setLinkBadge && v11_setLinkBadge('GPS連携','warn');
+      v11_setLinkStatus && v11_setLinkStatus('ネット接続が不安定なため地図表示は省略し、GPS取得後に本体へ戻ります。');
+      const m=document.getElementById('mapStatus');
+      if(m) m.textContent='オフラインGPS連携モード：地図タイルなしで現在地だけ取得します。';
+    }else if(noLeaflet){
+      const m=document.getElementById('mapStatus');
+      if(m) m.textContent='地図ライブラリ未読込。インターネット接続時は地図表示、PicoW-Config接続時はGPS連携のみ可能です。';
+    }
+  }catch(e){}
+}
+window.addEventListener('load',()=>setTimeout(v116_setOfflineGpsNotice,1200));
 
 
 // ============================================================
