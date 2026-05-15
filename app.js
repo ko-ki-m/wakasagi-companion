@@ -613,11 +613,15 @@ window.addEventListener('load',()=>setTimeout(v112_initLogSyncReceiver,1400));
 
 
 // ============================================================
-// v11.3: Auto link mode
+// v11.5系 app.js: Auto link mode
 // /log or /remote opens GitHub map with ?pico=...&autolink=1.
-// GitHub map gets GPS, builds maplink payload, jumps to Pico /log#maplink=...
-// Pico /log saves it to current sid, then returns to return_url.
-// User does not press "本体ログへ連携" in the normal flow.
+//
+// 第0.5段階の目的:
+// - Pico W /log の「現在地を記録」から来た時だけ動く。
+// - GPSをこの場で新規取得する。
+// - 成功したGPSだけをPico W /log#maplinkへ返す。
+// - GPS失敗時はPico Wへ戻らない。
+// - last_pos / currentPos / selectedTripId は使わない。
 // ============================================================
 function v113_autoBadge(text,cls){
   const b=document.getElementById('autoLinkBadge');
@@ -625,6 +629,7 @@ function v113_autoBadge(text,cls){
   if(b){ b.textContent=text; b.className='pill '+(cls||''); }
   if(s) s.textContent=text;
 }
+
 function v113_currentUrlWithoutAuto(){
   try{
     const u=new URL(location.href);
@@ -635,48 +640,155 @@ function v113_currentUrlWithoutAuto(){
     return location.origin + location.pathname + '?linked=1';
   }
 }
-try{
-  const v113_originalMakeMapLinkPayload = v11_makeMapLinkPayload;
-  v11_makeMapLinkPayload = async function(){
-    const p = await v113_originalMakeMapLinkPayload();
-    if(p){
-      p.auto_link = 1;
-      p.return_url = v113_currentUrlWithoutAuto();
-    }
-    return p;
-  };
-}catch(e){}
-async function v113_waitForCurrentPos(maxMs){
-  const start=Date.now();
-  while(Date.now()-start < maxMs){
-    try{
-      if(typeof currentPos !== 'undefined' && currentPos && Number.isFinite(Number(currentPos.lat)) && Number.isFinite(Number(currentPos.lng))){
-        return true;
-      }
-    }catch(e){}
-    await new Promise(r=>setTimeout(r,500));
+
+function v113_getAutoPicoHost(){
+  try{
+    const p=new URLSearchParams(location.search);
+    let host=p.get('pico') || localStorage.getItem('pico_ip') || '192.168.4.1';
+
+    host=decodeURIComponent(String(host))
+      .replace(/^https?:\/\//,'')
+      .replace(/\/.*$/,'')
+      .trim();
+
+    return host || '192.168.4.1';
+  }catch(e){
+    return '192.168.4.1';
   }
-  return false;
 }
+
+function v113_getFreshGps(){
+  return new Promise((resolve,reject)=>{
+    if(!window.isSecureContext){
+      reject(new Error('HTTPSで開いていません。'));
+      return;
+    }
+
+    if(!('geolocation' in navigator)){
+      reject(new Error('このブラウザは位置情報に対応していません。'));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(pos=>{
+      const c=pos.coords || {};
+      const lat=Number(c.latitude);
+      const lng=Number(c.longitude);
+      const acc=Number(c.accuracy || 0);
+
+      if(!Number.isFinite(lat) || !Number.isFinite(lng)){
+        reject(new Error('取得した緯度経度が不正です。'));
+        return;
+      }
+
+      resolve({
+        lat,
+        lng,
+        acc:Number.isFinite(acc)?acc:0,
+        t:Number(pos.timestamp || Date.now())
+      });
+    },err=>{
+      reject(new Error(err && err.message ? err.message : '現在地を取得できませんでした。'));
+    },{
+      enableHighAccuracy:true,
+      timeout:18000,
+      maximumAge:0
+    });
+  });
+}
+
+function v113_makeAutoGpsPayload(gps){
+  return {
+    v:1,
+    source:'wakasagi_map_autolink',
+
+    // このIDはPico W側の保存先統合キーにはしない。
+    // Pico W側では現在sid内で point_visit_id を発行する。
+    map_spot_id:'CURRENT_' + Date.now(),
+
+    lat:Number(gps.lat),
+    lng:Number(gps.lng),
+    acc:Number(gps.acc || 0),
+
+    lake_name:'',
+    point_name:'現在地',
+    place_name:'現在地',
+
+    line_no:'',
+    sinker_g:'',
+
+    // GitHub側の過去水深をPico W側の現在魚探水深として渡さない。
+    fishfinder_m:'',
+    fishfinder_depth_m:'',
+
+    water_temp_c:'',
+    note:'現在地を記録',
+
+    auto_link:1,
+    return_url:v113_currentUrlWithoutAuto(),
+    linked_ms:Date.now()
+  };
+}
+
+function v113_sendAutoGpsToPico(gps){
+  const host=v113_getAutoPicoHost();
+
+  try{
+    localStorage.setItem('pico_ip', host);
+  }catch(e){}
+
+  const payload=v113_makeAutoGpsPayload(gps);
+  const encoded=encodeURIComponent(v11_utf8_to_b64(JSON.stringify(payload)));
+
+  location.href='http://' + host + '/log#maplink=' + encoded;
+}
+
 async function v113_runAutoLinkIfRequested(){
   if(sessionStorage.getItem('wakasagi_linked_notice')==='1'){
     sessionStorage.removeItem('wakasagi_linked_notice');
     v113_autoBadge('連携済み','good');
-    v11_setLinkBadge && v11_setLinkBadge('連携済み','good');
+
+    if(typeof v11_setLinkBadge === 'function'){
+      v11_setLinkBadge('連携済み','good');
+    }
+
     return;
   }
+
   if(sessionStorage.getItem('wakasagi_autolink_once')!=='1') return;
+
+  // 再発火防止。
   sessionStorage.removeItem('wakasagi_autolink_once');
+
   v113_autoBadge('現在地取得中','warn');
-  const ok=await v113_waitForCurrentPos(18000);
-  if(!ok){
-    v113_autoBadge('現在地取得失敗','bad');
-    v11_setLinkStatus && v11_setLinkStatus('自動連携できません。現在地取得を確認してください。');
-    return;
+
+  if(typeof v11_setLinkStatus === 'function'){
+    v11_setLinkStatus('現在地を新規取得しています。前回位置は使いません。');
   }
-  v113_autoBadge('本体へ自動連携中','warn');
-  await v11_linkToPicoLog();
+
+  try{
+    const gps=await v113_getFreshGps();
+
+    v113_autoBadge('本体へ戻ります','warn');
+
+    if(typeof v11_setLinkStatus === 'function'){
+      v11_setLinkStatus('現在地を記録します。本体へ戻ります。');
+    }
+
+    v113_sendAutoGpsToPico(gps);
+  }catch(e){
+    v113_autoBadge('現在地取得失敗','bad');
+
+    if(typeof v11_setLinkStatus === 'function'){
+      v11_setLinkStatus('現在地を取得できません。位置情報の許可を確認してください。Pico Wへは戻りません。');
+    }
+
+    const m=document.getElementById('mapStatus');
+    if(m){
+      m.textContent='現在地を取得できません。位置情報の許可を確認してください。';
+    }
+  }
 }
+
 window.addEventListener('load',()=>setTimeout(v113_runAutoLinkIfRequested,2200));
 
 
