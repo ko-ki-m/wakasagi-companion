@@ -17,6 +17,37 @@ let allHistoryExpanded=false;
 let initialLakeViewDone=false;
 
 const $=(id)=>document.getElementById(id);
+
+// ============================================================
+// boot/autolink diagnostic overlay
+// 目的:
+// - SafariでMapページ起動直後にどこで止まるかを見る。
+// - 保存ロジック・履歴ロジック・水深処理は変更しない。
+// ============================================================
+function wakasagiDiag(msg){
+  try{
+    console.log('[WAKASAGI_DIAG]', msg);
+    let box=document.getElementById('wakasagiDiagBox');
+    if(!box){
+      box=document.createElement('div');
+      box.id='wakasagiDiagBox';
+      box.style.cssText='position:fixed;z-index:999999;left:8px;right:8px;bottom:8px;background:rgba(15,23,42,.94);color:#fff;border:2px solid #38bdf8;border-radius:12px;padding:8px 10px;font:14px/1.35 system-ui,-apple-system,sans-serif;white-space:pre-wrap;max-height:32vh;overflow:auto;';
+      document.body.appendChild(box);
+    }
+    const t=new Date().toLocaleTimeString();
+    box.textContent=(box.textContent?box.textContent+'\n':'')+t+'  '+msg;
+  }catch(e){}
+}
+window.addEventListener('error', function(e){
+  try{ wakasagiDiag('JS error: '+(e.message||e.error||'unknown')); }catch(_){}
+});
+window.addEventListener('unhandledrejection', function(e){
+  try{
+    const r=e.reason;
+    wakasagiDiag('Promise error: '+(r&&r.message?r.message:String(r)));
+  }catch(_){}
+});
+
 function nowMs(){return Date.now();}
 function pad(n){return String(n).padStart(2,'0');}
 function fmtTime(ms){const n=Number(ms||0); if(!n)return '-'; const d=new Date(n); if(Number.isNaN(d.getTime()))return '-'; return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;}
@@ -124,7 +155,7 @@ function downloadBlob(n,t,x){const b=new Blob([x],{type:t});const a=document.cre
 async function exportDb(){const trips=await getAllTrips();downloadBlob(`wakasagi_map_v10_${Date.now()}.json`,'application/json',JSON.stringify({version:'10',exported_ms:Date.now(),trips},null,2));}
 async function importPayload(payload){const rows=Array.isArray(payload)?payload:(payload.trips||payload.trip_records||payload.spots||[]);if(!Array.isArray(rows))return-1;let c=0;for(const r of rows){let t=r.trip_id?r:normalizeOld(r);if(!t)continue;t.trip_id=t.trip_id||genId('T');t.date_ms=Number(t.date_ms||t.start_ms||nowMs());t.lat=Number(t.lat);t.lng=Number(t.lng);if(!validLatLng(t.lat,t.lng))continue;t.updated_ms=nowMs();await putTrip(t);c++;}return c;}
 async function initPwa(){if('serviceWorker'in navigator){try{const reg=await navigator.serviceWorker.register('./service-worker.js?v=auto_gps_20260514');try{await reg.update();}catch(e){}}catch(e){}}}
-async function init(){hidePointHistoryCard();hideSelectedTripDetailCard();if(window.isSecureContext)setBadge('secureBadge','GPS可','good');else setBadge('secureBadge','HTTPS必要','bad');db=await openDb();ensureMap();$('tripDate').value=toLocal(nowMs());const n=await migrateOld(false);if(n>0)$('mapStatus').textContent=`旧データ${n}件を移行しました。`;
+async function init(){wakasagiDiag('init開始');hidePointHistoryCard();hideSelectedTripDetailCard();if(window.isSecureContext)setBadge('secureBadge','GPS可','good');else setBadge('secureBadge','HTTPS必要','bad');db=await openDb();wakasagiDiag('DB open OK');ensureMap();wakasagiDiag('ensureMap完了');$('tripDate').value=toLocal(nowMs());const n=await migrateOld(false);if(n>0)$('mapStatus').textContent=`旧データ${n}件を移行しました。`;
 $('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitNear').onclick=fitNear;$('btnSaveScroll').onclick=()=>$('tripDate').scrollIntoView({behavior:'smooth',block:'center'});$('btnSaveTrip').onclick=saveTrip;$('btnLoadSelected').onclick=()=>selectedTripId&&loadToForm(selectedTripId);$('btnUpdateTrip').onclick=updateTrip;$('btnClearForm').onclick=clearForm;$('btnExport').onclick=exportDb;$('btnImport').onclick=()=>$('importFile').click();$('importFile').onchange=async e=>{const f=e.target.files&&e.target.files[0];if(!f)return;let p;try{p=JSON.parse(await f.text());}catch(err){alert('JSONを読めません。');return;}const c=await importPayload(p);alert(`${c}件を読み込みました。`);await refreshAll();};$('btnMigrate').onclick=async()=>{const c=await migrateOld(true);alert(`旧データ移行 ${c}件`);await refreshAll();};$('btnClearDb').onclick=async()=>{if(confirm('テストDBを消去しますか？')){await new Promise(res=>{const tx=db.transaction([STORE_TRIPS,STORE_META],'readwrite');tx.objectStore(STORE_TRIPS).clear();tx.objectStore(STORE_META).clear();tx.oncomplete=()=>res();});location.reload();}};$('searchBox').oninput=renderAllList;$('sortMode').onchange=renderAllList;document.addEventListener('click',ev=>{
   const pd=ev.target.closest('[data-popup-trip-id]');
   if(pd){
@@ -163,7 +194,7 @@ $('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitN
     ev.preventDefault();
     selectTrip(t.getAttribute('data-trip-id'));
   }
-});await initPwa();await refreshAll();const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng)))updatePosition(last,false,true);locate(false);}
+});await initPwa();wakasagiDiag('ServiceWorker登録処理完了');await refreshAll();wakasagiDiag('refreshAll完了');const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng))){wakasagiDiag('last_posあり: 通常表示用に反映');updatePosition(last,false,true);}wakasagiDiag('通常locate開始');locate(false);}
 window.addEventListener('load',()=>init().catch(e=>{$('locStatus').textContent='初期化エラー: '+(e&&e.message?e.message:e);setBadge('locBadge','エラー','bad');}));
 
 
@@ -290,10 +321,11 @@ function v11_enableLinkButton(){
 function v111_applyPicoParam(){
   try{
     const p=new URLSearchParams(location.search);
-    if(p.get('autolink')==='1') sessionStorage.setItem('wakasagi_autolink_once','1');
+    if(p.get('autolink')==='1'){ sessionStorage.setItem('wakasagi_autolink_once','1'); wakasagiDiag('autolink=1検出: flag保存'); }
     if(p.get('linked')==='1') sessionStorage.setItem('wakasagi_linked_notice','1');
     const pico=p.get('pico');
-    if(!pico) return;
+    if(!pico){ wakasagiDiag('pico paramなし'); return; }
+    wakasagiDiag('pico param検出');
     let host=decodeURIComponent(pico).replace(/^https?:\/\//,'').replace(/\/.*$/,'');
     if(!host) return;
     localStorage.setItem('pico_ip',host);
@@ -515,15 +547,11 @@ async function v112_applyLogSyncPayload(p){
     return false;
   }
 
-  v112_setLogSync('logsync検査中','warn');
-
   const sid = String(p.sid || '').trim();
   if(!sid){
     v112_setLogSync('sidなし','bad');
     return false;
   }
-
-  v112_setLogSync('sid確認OK','warn');
 
   const lat = Number(p.gps_lat || p.lat);
   const lng = Number(p.gps_lng || p.lng);
@@ -532,18 +560,12 @@ async function v112_applyLogSyncPayload(p){
     return false;
   }
 
-  v112_setLogSync('座標確認OK','warn');
-
   const now = Date.now();
   const pointKey = String(p.point_visit_id || p.map_point_key || '').trim();
   const summary = v112_makePicoSummary(p);
 
-  v112_setLogSync('保存先検索中','warn');
-
   let t = await v112_findTripForLogSync(p);
   if(!t) t = v112_makeTripFromLogSync(p);
-
-  v112_setLogSync('保存対象OK','warn');
 
   t.pico_sid = sid;
   t.point_visit_id = String(t.point_visit_id || pointKey || '');
@@ -590,24 +612,14 @@ async function v112_applyLogSyncPayload(p){
 
   t.updated_ms = now;
 
-  v112_setLogSync('保存中','warn');
-
   await putTrip(t);
-
-  v112_setLogSync('保存完了','warn');
-
   selectedTripId = t.trip_id;
 
   if(history && history.replaceState){
     history.replaceState(null, document.title, location.pathname + location.search);
-    v112_setLogSync('URL短縮完了','warn');
   }
 
-  v112_setLogSync('表示更新中','warn');
-
   await refreshAll();
-
-  v112_setLogSync('表示更新完了','warn');
 
   try{
     showTripDetail(t, {lat:Number(t.lat), lng:Number(t.lng)});
@@ -626,19 +638,8 @@ async function v112_initLogSyncReceiver(){
     if(db) break;
     await new Promise(r=>setTimeout(r,250));
   }
-
   const p=v112_decodeLogSyncPayload();
-  if(!p) return;
-
-  v112_setLogSync('logsync受信','warn');
-
-  try{
-    await v112_applyLogSyncPayload(p);
-  }catch(e){
-    const msg = e && e.message ? e.message : String(e);
-    v112_setLogSync('logsync例外: ' + msg,'bad');
-    try{ console.error('logsync exception', e); }catch(_){}
-  }
+  if(p) await v112_applyLogSyncPayload(p);
 }
 window.addEventListener('load',()=>setTimeout(v112_initLogSyncReceiver,1400));
 
@@ -690,13 +691,14 @@ async function v113_waitForCurrentPos(maxMs){
   return false;
 }
 async function v113_runAutoLinkIfRequested(){
+  wakasagiDiag('autolink起動判定開始');
   if(sessionStorage.getItem('wakasagi_linked_notice')==='1'){
     sessionStorage.removeItem('wakasagi_linked_notice');
     v113_autoBadge('連携済み','good');
     v11_setLinkBadge && v11_setLinkBadge('連携済み','good');
     return;
   }
-  if(sessionStorage.getItem('wakasagi_autolink_once')!=='1') return;
+  if(sessionStorage.getItem('wakasagi_autolink_once')!=='1'){ wakasagiDiag('autolink flagなし: 通常閲覧'); return; }
   sessionStorage.removeItem('wakasagi_autolink_once');
   v113_autoBadge('現在地取得中','warn');
   const ok=await v113_waitForCurrentPos(18000);
@@ -828,7 +830,7 @@ function v115_getPicoHost(){
     const pico = p.get('pico');
     if(pico){
       host = decodeURIComponent(pico).replace(/^https?:\/\//,'').replace(/\/.*$/,'').trim();
-      if(host) localStorage.setItem('pico_ip',host);
+      if(host){ localStorage.setItem('pico_ip',host); wakasagiDiag('pico host保存: '+host); }
     }
     if(!host) host = '192.168.4.1';
     host = String(host).replace(/^https?:\/\//,'').replace(/\/.*$/,'').trim();
