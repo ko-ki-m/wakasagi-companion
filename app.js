@@ -38,7 +38,60 @@ function sub(t){return `ライン ${esc(t.line_no||'-')} / シンカー ${esc(t.
 function dCurrent(t){if(!currentPos)return null; return dist(Number(currentPos.lat),Number(currentPos.lng),lat(t),lng(t));}
 function dBase(t,a,b){if(!validLatLng(Number(a),Number(b))||!validLatLng(lat(t),lng(t)))return null; return dist(Number(a),Number(b),lat(t),lng(t));}
 
-function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,DB_VER);req.onupgradeneeded=()=>{const d=req.result;if(!d.objectStoreNames.contains(STORE_TRIPS)){const st=d.createObjectStore(STORE_TRIPS,{keyPath:'trip_id'});st.createIndex('date_ms','date_ms',{unique:false});}if(!d.objectStoreNames.contains(STORE_META))d.createObjectStore(STORE_META,{keyPath:'key'});};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});}
+function openDb(){
+  return new Promise((resolve,reject)=>{
+    let repaired=false;
+
+    function createStores(d){
+      if(!d.objectStoreNames.contains(STORE_TRIPS)){
+        const st=d.createObjectStore(STORE_TRIPS,{keyPath:'trip_id'});
+        st.createIndex('date_ms','date_ms',{unique:false});
+      }
+      if(!d.objectStoreNames.contains(STORE_META)){
+        d.createObjectStore(STORE_META,{keyPath:'key'});
+      }
+    }
+
+    function openOnce(){
+      const req=indexedDB.open(DB_NAME,DB_VER);
+
+      req.onupgradeneeded=()=>{
+        createStores(req.result);
+      };
+
+      req.onsuccess=()=>{
+        const d=req.result;
+        const ok = d.objectStoreNames.contains(STORE_TRIPS) &&
+                   d.objectStoreNames.contains(STORE_META);
+
+        if(ok){
+          resolve(d);
+          return;
+        }
+
+        // Safari等で、DBは存在するが必要なobject storeが無い破損状態への自己修復。
+        // 正常DBではここへ入らない。
+        if(repaired){
+          try{ d.close(); }catch(e){}
+          reject(new Error('IndexedDB store repair failed'));
+          return;
+        }
+
+        repaired=true;
+        try{ d.close(); }catch(e){}
+
+        const del=indexedDB.deleteDatabase(DB_NAME);
+        del.onsuccess=()=>openOnce();
+        del.onerror=()=>reject(del.error || new Error('IndexedDB delete failed'));
+        del.onblocked=()=>reject(new Error('IndexedDB delete blocked'));
+      };
+
+      req.onerror=()=>reject(req.error);
+    }
+
+    openOnce();
+  });
+}
 function st(name,mode='readonly'){return db.transaction(name,mode).objectStore(name);}
 function getAllTrips(){return new Promise(res=>{const r=st(STORE_TRIPS).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([]);});}
 function putTrip(t){return new Promise(res=>{const tx=db.transaction(STORE_TRIPS,'readwrite');tx.objectStore(STORE_TRIPS).put(t);tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);});}
@@ -616,12 +669,10 @@ window.addEventListener('load',()=>setTimeout(v112_initLogSyncReceiver,1400));
 // v11.5系 app.js: Auto link mode
 // /log or /remote opens GitHub map with ?pico=...&autolink=1.
 //
-// 第0.5段階の目的:
-// - Pico W /log の「現在地を記録」から来た時だけ動く。
-// - GPSをこの場で新規取得する。
-// - 成功したGPSだけをPico W /log#maplinkへ返す。
-// - GPS失敗時はPico Wへ戻らない。
-// - last_pos / currentPos / selectedTripId は使わない。
+// 第0.5段階:
+// - Auto link時は currentPos / last_pos / selectedTripId を使わない。
+// - GPSをこの場で新規取得し、成功したGPSだけをPico Wへ返す。
+// - Safariで前回の linked_notice が残っていても、autolink要求を優先する。
 // ============================================================
 function v113_autoBadge(text,cls){
   const b=document.getElementById('autoLinkBadge');
@@ -743,7 +794,14 @@ function v113_sendAutoGpsToPico(gps){
 }
 
 async function v113_runAutoLinkIfRequested(){
-  if(sessionStorage.getItem('wakasagi_linked_notice')==='1'){
+  const autoRequested = (sessionStorage.getItem('wakasagi_autolink_once') === '1');
+
+  // Safariでは前回の ?linked=1 で残った wakasagi_linked_notice が、
+  // 次の ?autolink=1 起動を先に潰す可能性がある。
+  // autolink要求がある時は、linked_noticeよりautolinkを優先する。
+  if(autoRequested){
+    sessionStorage.removeItem('wakasagi_linked_notice');
+  }else if(sessionStorage.getItem('wakasagi_linked_notice')==='1'){
     sessionStorage.removeItem('wakasagi_linked_notice');
     v113_autoBadge('連携済み','good');
 
@@ -754,7 +812,7 @@ async function v113_runAutoLinkIfRequested(){
     return;
   }
 
-  if(sessionStorage.getItem('wakasagi_autolink_once')!=='1') return;
+  if(!autoRequested) return;
 
   // 再発火防止。
   sessionStorage.removeItem('wakasagi_autolink_once');
