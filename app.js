@@ -17,37 +17,6 @@ let allHistoryExpanded=false;
 let initialLakeViewDone=false;
 
 const $=(id)=>document.getElementById(id);
-
-// ============================================================
-// boot/autolink diagnostic overlay
-// 目的:
-// - SafariでMapページ起動直後にどこで止まるかを見る。
-// - 保存ロジック・履歴ロジック・水深処理は変更しない。
-// ============================================================
-function wakasagiDiag(msg){
-  try{
-    console.log('[WAKASAGI_DIAG]', msg);
-    let box=document.getElementById('wakasagiDiagBox');
-    if(!box){
-      box=document.createElement('div');
-      box.id='wakasagiDiagBox';
-      box.style.cssText='position:fixed;z-index:999999;left:8px;right:8px;bottom:8px;background:rgba(15,23,42,.94);color:#fff;border:2px solid #38bdf8;border-radius:12px;padding:8px 10px;font:14px/1.35 system-ui,-apple-system,sans-serif;white-space:pre-wrap;max-height:32vh;overflow:auto;';
-      document.body.appendChild(box);
-    }
-    const t=new Date().toLocaleTimeString();
-    box.textContent=(box.textContent?box.textContent+'\n':'')+t+'  '+msg;
-  }catch(e){}
-}
-window.addEventListener('error', function(e){
-  try{ wakasagiDiag('JS error: '+(e.message||e.error||'unknown')); }catch(_){}
-});
-window.addEventListener('unhandledrejection', function(e){
-  try{
-    const r=e.reason;
-    wakasagiDiag('Promise error: '+(r&&r.message?r.message:String(r)));
-  }catch(_){}
-});
-
 function nowMs(){return Date.now();}
 function pad(n){return String(n).padStart(2,'0');}
 function fmtTime(ms){const n=Number(ms||0); if(!n)return '-'; const d=new Date(n); if(Number.isNaN(d.getTime()))return '-'; return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;}
@@ -69,60 +38,7 @@ function sub(t){return `ライン ${esc(t.line_no||'-')} / シンカー ${esc(t.
 function dCurrent(t){if(!currentPos)return null; return dist(Number(currentPos.lat),Number(currentPos.lng),lat(t),lng(t));}
 function dBase(t,a,b){if(!validLatLng(Number(a),Number(b))||!validLatLng(lat(t),lng(t)))return null; return dist(Number(a),Number(b),lat(t),lng(t));}
 
-function openDb(){
-  return new Promise((resolve,reject)=>{
-    let repaired=false;
-
-    function createStores(d){
-      if(!d.objectStoreNames.contains(STORE_TRIPS)){
-        const st=d.createObjectStore(STORE_TRIPS,{keyPath:'trip_id'});
-        st.createIndex('date_ms','date_ms',{unique:false});
-      }
-      if(!d.objectStoreNames.contains(STORE_META)){
-        d.createObjectStore(STORE_META,{keyPath:'key'});
-      }
-    }
-
-    function openOnce(){
-      const req=indexedDB.open(DB_NAME,DB_VER);
-
-      req.onupgradeneeded=()=>{
-        createStores(req.result);
-      };
-
-      req.onsuccess=()=>{
-        const d=req.result;
-        const ok = d.objectStoreNames.contains(STORE_TRIPS) &&
-                   d.objectStoreNames.contains(STORE_META);
-
-        if(ok){
-          resolve(d);
-          return;
-        }
-
-        // Safari等で、DBは存在するが必要なobject storeが無い破損状態への自己修復。
-        // 正常なChrome等ではここへ入らない。
-        if(repaired){
-          try{ d.close(); }catch(e){}
-          reject(new Error('IndexedDB store repair failed'));
-          return;
-        }
-
-        repaired=true;
-        try{ d.close(); }catch(e){}
-
-        const del=indexedDB.deleteDatabase(DB_NAME);
-        del.onsuccess=()=>openOnce();
-        del.onerror=()=>reject(del.error || new Error('IndexedDB delete failed'));
-        del.onblocked=()=>reject(new Error('IndexedDB delete blocked'));
-      };
-
-      req.onerror=()=>reject(req.error);
-    }
-
-    openOnce();
-  });
-}
+function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,DB_VER);req.onupgradeneeded=()=>{const d=req.result;if(!d.objectStoreNames.contains(STORE_TRIPS)){const st=d.createObjectStore(STORE_TRIPS,{keyPath:'trip_id'});st.createIndex('date_ms','date_ms',{unique:false});}if(!d.objectStoreNames.contains(STORE_META))d.createObjectStore(STORE_META,{keyPath:'key'});};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});}
 function st(name,mode='readonly'){return db.transaction(name,mode).objectStore(name);}
 function getAllTrips(){return new Promise(res=>{const r=st(STORE_TRIPS).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([]);});}
 function putTrip(t){return new Promise(res=>{const tx=db.transaction(STORE_TRIPS,'readwrite');tx.objectStore(STORE_TRIPS).put(t);tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);});}
@@ -208,7 +124,7 @@ function downloadBlob(n,t,x){const b=new Blob([x],{type:t});const a=document.cre
 async function exportDb(){const trips=await getAllTrips();downloadBlob(`wakasagi_map_v10_${Date.now()}.json`,'application/json',JSON.stringify({version:'10',exported_ms:Date.now(),trips},null,2));}
 async function importPayload(payload){const rows=Array.isArray(payload)?payload:(payload.trips||payload.trip_records||payload.spots||[]);if(!Array.isArray(rows))return-1;let c=0;for(const r of rows){let t=r.trip_id?r:normalizeOld(r);if(!t)continue;t.trip_id=t.trip_id||genId('T');t.date_ms=Number(t.date_ms||t.start_ms||nowMs());t.lat=Number(t.lat);t.lng=Number(t.lng);if(!validLatLng(t.lat,t.lng))continue;t.updated_ms=nowMs();await putTrip(t);c++;}return c;}
 async function initPwa(){if('serviceWorker'in navigator){try{const reg=await navigator.serviceWorker.register('./service-worker.js?v=auto_gps_20260514');try{await reg.update();}catch(e){}}catch(e){}}}
-async function init(){wakasagiDiag('init開始');hidePointHistoryCard();hideSelectedTripDetailCard();if(window.isSecureContext)setBadge('secureBadge','GPS可','good');else setBadge('secureBadge','HTTPS必要','bad');db=await openDb();wakasagiDiag('DB open OK');ensureMap();wakasagiDiag('ensureMap完了');$('tripDate').value=toLocal(nowMs());const n=await migrateOld(false);if(n>0)$('mapStatus').textContent=`旧データ${n}件を移行しました。`;
+async function init(){hidePointHistoryCard();hideSelectedTripDetailCard();if(window.isSecureContext)setBadge('secureBadge','GPS可','good');else setBadge('secureBadge','HTTPS必要','bad');db=await openDb();ensureMap();$('tripDate').value=toLocal(nowMs());const n=await migrateOld(false);if(n>0)$('mapStatus').textContent=`旧データ${n}件を移行しました。`;
 $('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitNear').onclick=fitNear;$('btnSaveScroll').onclick=()=>$('tripDate').scrollIntoView({behavior:'smooth',block:'center'});$('btnSaveTrip').onclick=saveTrip;$('btnLoadSelected').onclick=()=>selectedTripId&&loadToForm(selectedTripId);$('btnUpdateTrip').onclick=updateTrip;$('btnClearForm').onclick=clearForm;$('btnExport').onclick=exportDb;$('btnImport').onclick=()=>$('importFile').click();$('importFile').onchange=async e=>{const f=e.target.files&&e.target.files[0];if(!f)return;let p;try{p=JSON.parse(await f.text());}catch(err){alert('JSONを読めません。');return;}const c=await importPayload(p);alert(`${c}件を読み込みました。`);await refreshAll();};$('btnMigrate').onclick=async()=>{const c=await migrateOld(true);alert(`旧データ移行 ${c}件`);await refreshAll();};$('btnClearDb').onclick=async()=>{if(confirm('テストDBを消去しますか？')){await new Promise(res=>{const tx=db.transaction([STORE_TRIPS,STORE_META],'readwrite');tx.objectStore(STORE_TRIPS).clear();tx.objectStore(STORE_META).clear();tx.oncomplete=()=>res();});location.reload();}};$('searchBox').oninput=renderAllList;$('sortMode').onchange=renderAllList;document.addEventListener('click',ev=>{
   const pd=ev.target.closest('[data-popup-trip-id]');
   if(pd){
@@ -247,7 +163,7 @@ $('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitN
     ev.preventDefault();
     selectTrip(t.getAttribute('data-trip-id'));
   }
-});await initPwa();wakasagiDiag('ServiceWorker登録処理完了');await refreshAll();wakasagiDiag('refreshAll完了');const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng))){wakasagiDiag('last_posあり: 通常表示用に反映');updatePosition(last,false,true);}wakasagiDiag('通常locate開始');locate(false);}
+});await initPwa();await refreshAll();const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng)))updatePosition(last,false,true);locate(false);}
 window.addEventListener('load',()=>init().catch(e=>{$('locStatus').textContent='初期化エラー: '+(e&&e.message?e.message:e);setBadge('locBadge','エラー','bad');}));
 
 
@@ -374,14 +290,13 @@ function v11_enableLinkButton(){
 function v111_applyPicoParam(){
   try{
     const p=new URLSearchParams(location.search);
-    if(p.get('autolink')==='1'){ sessionStorage.setItem('wakasagi_autolink_once','1'); wakasagiDiag('autolink=1検出: flag保存'); }
+    if(p.get('autolink')==='1') sessionStorage.setItem('wakasagi_autolink_once','1');
     if(p.get('linked')==='1') sessionStorage.setItem('wakasagi_linked_notice','1');
     const pico=p.get('pico');
-    if(!pico){ wakasagiDiag('pico paramなし'); return; }
-    wakasagiDiag('pico param検出');
+    if(!pico) return;
     let host=decodeURIComponent(pico).replace(/^https?:\/\//,'').replace(/\/.*$/,'');
     if(!host) return;
-    localStorage.setItem('pico_ip',host); wakasagiDiag('pico host保存: '+host);
+    localStorage.setItem('pico_ip',host);
     const el=document.getElementById('picoIp');
     if(el) el.value=host;
     if(history && history.replaceState){
@@ -698,13 +613,15 @@ window.addEventListener('load',()=>setTimeout(v112_initLogSyncReceiver,1400));
 
 
 // ============================================================
-// v11.5系 app.js: Auto link mode + Safari診断
+// v11.5系 app.js: Auto link mode
 // /log or /remote opens GitHub map with ?pico=...&autolink=1.
 //
-// 目的:
-// - Auto link時は currentPos / last_pos / selectedTripId を使わない。
-// - GPSをこの場で新規取得し、成功したGPSだけをPico Wへ返す。
-// - Safariで前回の linked_notice が残っていても、autolink要求を優先する。
+// 第0.5段階の目的:
+// - Pico W /log の「現在地を記録」から来た時だけ動く。
+// - GPSをこの場で新規取得する。
+// - 成功したGPSだけをPico W /log#maplinkへ返す。
+// - GPS失敗時はPico Wへ戻らない。
+// - last_pos / currentPos / selectedTripId は使わない。
 // ============================================================
 function v113_autoBadge(text,cls){
   const b=document.getElementById('autoLinkBadge');
@@ -741,8 +658,6 @@ function v113_getAutoPicoHost(){
 }
 
 function v113_getFreshGps(){
-  wakasagiDiag('autolink専用GPS開始');
-
   return new Promise((resolve,reject)=>{
     if(!window.isSecureContext){
       reject(new Error('HTTPSで開いていません。'));
@@ -764,8 +679,6 @@ function v113_getFreshGps(){
         reject(new Error('取得した緯度経度が不正です。'));
         return;
       }
-
-      wakasagiDiag('autolink専用GPS成功: '+lat.toFixed(7)+','+lng.toFixed(7));
 
       resolve({
         lat,
@@ -818,7 +731,6 @@ function v113_makeAutoGpsPayload(gps){
 
 function v113_sendAutoGpsToPico(gps){
   const host=v113_getAutoPicoHost();
-  wakasagiDiag('Picoへ戻る直前: '+host);
 
   try{
     localStorage.setItem('pico_ip', host);
@@ -831,19 +743,8 @@ function v113_sendAutoGpsToPico(gps){
 }
 
 async function v113_runAutoLinkIfRequested(){
-  wakasagiDiag('autolink起動判定開始');
-
-  const autoRequested = (sessionStorage.getItem('wakasagi_autolink_once') === '1');
-
-  // Safariでは前回の ?linked=1 で残った wakasagi_linked_notice が、
-  // 次の ?autolink=1 起動を先に潰す可能性がある。
-  // autolink要求がある時は、linked_noticeよりautolinkを優先する。
-  if(autoRequested){
+  if(sessionStorage.getItem('wakasagi_linked_notice')==='1'){
     sessionStorage.removeItem('wakasagi_linked_notice');
-    wakasagiDiag('autolink優先: linked_notice消去');
-  }else if(sessionStorage.getItem('wakasagi_linked_notice')==='1'){
-    sessionStorage.removeItem('wakasagi_linked_notice');
-    wakasagiDiag('linked_notice処理: 連携済み表示のみ');
     v113_autoBadge('連携済み','good');
 
     if(typeof v11_setLinkBadge === 'function'){
@@ -853,14 +754,10 @@ async function v113_runAutoLinkIfRequested(){
     return;
   }
 
-  if(!autoRequested){
-    wakasagiDiag('autolink flagなし: 通常閲覧');
-    return;
-  }
+  if(sessionStorage.getItem('wakasagi_autolink_once')!=='1') return;
 
   // 再発火防止。
   sessionStorage.removeItem('wakasagi_autolink_once');
-  wakasagiDiag('autolink flag消去、GPS処理へ');
 
   v113_autoBadge('現在地取得中','warn');
 
@@ -879,7 +776,6 @@ async function v113_runAutoLinkIfRequested(){
 
     v113_sendAutoGpsToPico(gps);
   }catch(e){
-    wakasagiDiag('autolink GPS失敗: '+(e&&e.message?e.message:String(e)));
     v113_autoBadge('現在地取得失敗','bad');
 
     if(typeof v11_setLinkStatus === 'function'){
