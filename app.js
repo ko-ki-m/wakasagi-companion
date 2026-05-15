@@ -69,7 +69,60 @@ function sub(t){return `ライン ${esc(t.line_no||'-')} / シンカー ${esc(t.
 function dCurrent(t){if(!currentPos)return null; return dist(Number(currentPos.lat),Number(currentPos.lng),lat(t),lng(t));}
 function dBase(t,a,b){if(!validLatLng(Number(a),Number(b))||!validLatLng(lat(t),lng(t)))return null; return dist(Number(a),Number(b),lat(t),lng(t));}
 
-function openDb(){return new Promise((resolve,reject)=>{const req=indexedDB.open(DB_NAME,DB_VER);req.onupgradeneeded=()=>{const d=req.result;if(!d.objectStoreNames.contains(STORE_TRIPS)){const st=d.createObjectStore(STORE_TRIPS,{keyPath:'trip_id'});st.createIndex('date_ms','date_ms',{unique:false});}if(!d.objectStoreNames.contains(STORE_META))d.createObjectStore(STORE_META,{keyPath:'key'});};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});}
+function openDb(){
+  return new Promise((resolve,reject)=>{
+    let repaired=false;
+
+    function createStores(d){
+      if(!d.objectStoreNames.contains(STORE_TRIPS)){
+        const st=d.createObjectStore(STORE_TRIPS,{keyPath:'trip_id'});
+        st.createIndex('date_ms','date_ms',{unique:false});
+      }
+      if(!d.objectStoreNames.contains(STORE_META)){
+        d.createObjectStore(STORE_META,{keyPath:'key'});
+      }
+    }
+
+    function openOnce(){
+      const req=indexedDB.open(DB_NAME,DB_VER);
+
+      req.onupgradeneeded=()=>{
+        createStores(req.result);
+      };
+
+      req.onsuccess=()=>{
+        const d=req.result;
+        const ok = d.objectStoreNames.contains(STORE_TRIPS) &&
+                   d.objectStoreNames.contains(STORE_META);
+
+        if(ok){
+          resolve(d);
+          return;
+        }
+
+        // Safari等で、DBは存在するが必要なobject storeが無い破損状態への自己修復。
+        // 正常なChrome等ではここへ入らない。
+        if(repaired){
+          try{ d.close(); }catch(e){}
+          reject(new Error('IndexedDB store repair failed'));
+          return;
+        }
+
+        repaired=true;
+        try{ d.close(); }catch(e){}
+
+        const del=indexedDB.deleteDatabase(DB_NAME);
+        del.onsuccess=()=>openOnce();
+        del.onerror=()=>reject(del.error || new Error('IndexedDB delete failed'));
+        del.onblocked=()=>reject(new Error('IndexedDB delete blocked'));
+      };
+
+      req.onerror=()=>reject(req.error);
+    }
+
+    openOnce();
+  });
+}
 function st(name,mode='readonly'){return db.transaction(name,mode).objectStore(name);}
 function getAllTrips(){return new Promise(res=>{const r=st(STORE_TRIPS).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([]);});}
 function putTrip(t){return new Promise(res=>{const tx=db.transaction(STORE_TRIPS,'readwrite');tx.objectStore(STORE_TRIPS).put(t);tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);});}
