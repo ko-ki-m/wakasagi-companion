@@ -128,6 +128,49 @@ function tripTimeLabelForPopup(t){
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function tripDepthLabelForTimeList(t){
+  const s=t && t.pico_summary ? t.pico_summary : null;
+  const st=String((t && t.depth_status) || (s && s.depth_status) || '').trim();
+
+  if(st==='not_measured') return '未底取り';
+
+  const candidates=[
+    t && t.fishfinder_depth_m,
+    s && s.max_depth_m,
+    s && s.fishfinder_depth_m
+  ];
+
+  for(const c of candidates){
+    const n=Number(c);
+    if(Number.isFinite(n) && n>0){
+      return '水深 '+n.toFixed(2).replace(/\.?0+$/,'')+'m';
+    }
+  }
+
+  return '';
+}
+
+function tripLineSinkerLabelForTimeList(t){
+  const arr=[];
+  const line=String((t && t.line_no) || '').trim();
+  const sinker=String((t && t.sinker_g) || '').trim();
+
+  if(line) arr.push(line);
+  if(sinker) arr.push(sinker+'g');
+
+  return arr.join(' / ');
+}
+
+function tripBriefMetaForTimeList(t){
+  const arr=[
+    tripDepthLabelForTimeList(t),
+    tripLineSinkerLabelForTimeList(t)
+  ].filter(Boolean);
+
+  return arr.join(' / ');
+}
+
+
 
 function tripLakeKey(t){
   return String(t && t.lake_name ? t.lake_name : '').trim();
@@ -248,11 +291,13 @@ async function showPopupDateDetail(groupId,dateKey,box){
   showPopupTimeList(groupId,dateKey,dg,box);
 }
 
-function showPopupTimeList(groupId,dateKey,dg,box){
+function showPopupTimeList(groupId,dateKey,dg){
   const trips=(dg.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));
   const items=trips.map(t=>{
     const label=tripTimeLabelForPopup(t);
-    return `<a class="popupBtn" href="#" data-popup-group-id="${esc(groupId)}" data-popup-trip-id="${esc(t.trip_id)}">${esc(label)} ${esc(title(t))}</a>`;
+    const meta=tripBriefMetaForTimeList(t);
+    const text=meta ? `${label}　${meta}` : label;
+    return `<a class="popupBtn" href="#" data-popup-group-id="${esc(groupId)}" data-popup-trip-id="${esc(t.trip_id)}">${esc(text)}</a>`;
   }).join(' ');
 
   const html=`<div class="popupTitle">${esc(dg.label)} の履歴 ${trips.length}件</div><div class="popupMeta">見たい時刻を選択してください。</div>${items||'<div class="popupMeta">履歴がありません。</div>'}`;
@@ -279,7 +324,8 @@ function showFrontTimeList(groupId,dateKey,dg){
   const trips=(dg.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));
   const items=trips.map(t=>{
     const label=tripTimeLabelForPopup(t);
-    return `<button type="button" class="item" data-popup-group-id="${esc(groupId)}" data-popup-trip-id="${esc(t.trip_id)}"><div class="top"><span>${esc(label)}</span><span>${esc(title(t))}</span></div></button>`;
+    const meta=tripBriefMetaForTimeList(t);
+    return `<button type="button" class="item" data-popup-group-id="${esc(groupId)}" data-popup-trip-id="${esc(t.trip_id)}"><div class="top"><span>${esc(label)}</span><span>${esc(title(t))}</span></div><div class="body">${esc(meta || '詳細を表示')}</div></button>`;
   }).join('');
 
   o.innerHTML=`<div class="cardHead"><div><h2>${esc(dg.label)} の履歴 ${trips.length}件</h2><p>見たい時刻を選択してください。</p></div><button id="frontDetailClose" type="button">閉じる</button></div><div class="list" style="margin-top:10px">${items||'<div class="emptyBox">履歴がありません。</div>'}</div>`;
