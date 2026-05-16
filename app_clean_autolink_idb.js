@@ -120,6 +120,15 @@ function tripDateLabelFromKey(k){
   return `${p[0]}/${p[1]}/${p[2]}`;
 }
 
+function tripTimeLabelForPopup(t){
+  const n=tms(t);
+  if(!n) return '時刻不明';
+  const d=new Date(n);
+  if(Number.isNaN(d.getTime())) return '時刻不明';
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+
 function tripLakeKey(t){
   return String(t && t.lake_name ? t.lake_name : '').trim();
 }
@@ -200,8 +209,8 @@ function markerClass(g){if(selectedGroupId===g.group_id)return'cluster selected'
 function popup(g){
   const dateGroups=(g.date_groups&&g.date_groups.length)?g.date_groups:buildDateGroupsForTrips(g.trips||[]);
   const dates=dateGroups.map(d=>{
-    const extra=(d.trips&&d.trips.length>1)?` <span class="popupMeta">(${d.trips.length})</span>`:'';
-    return `<a class="popupBtn" href="#" data-popup-group-id="${esc(g.group_id)}" data-popup-date-key="${esc(d.date_key)}">${esc(d.label)}${extra}</a>`;
+    const suffix=(d.trips&&d.trips.length>1)?` (${d.trips.length})`:'';
+    return `<a class="popupBtn" href="#" data-popup-group-id="${esc(g.group_id)}" data-popup-date-key="${esc(d.date_key)}">${esc(d.label + suffix)}</a>`;
   }).join(' ');
   return`<div class="popupTitle">この地点の過去 ${dateGroups.length}日</div><div class="popupMeta">見たい日付を選択してください。</div>${dates||'<div class="popupMeta">履歴がありません。</div>'}`;
 }
@@ -228,17 +237,58 @@ async function showPopupDateDetail(groupId,dateKey,box){
 
   const dateGroups=(g.date_groups&&g.date_groups.length)?g.date_groups:buildDateGroupsForTrips(g.trips||[]);
   const dg=dateGroups.find(x=>String(x.date_key)===String(dateKey));
-  if(!dg) return;
+  if(!dg || !Array.isArray(dg.trips) || dg.trips.length===0) return;
 
-  const t=dg.representative || representativeTripForDate(dg.trips||[]);
-  if(!t) return;
+  if(dg.trips.length===1){
+    const t=dg.trips[0];
+    showPopupTripDetail(groupId,t.trip_id,box);
+    return;
+  }
 
-  selectedTripId=t.trip_id;
-  selectedGroupId=g.group_id;
-  showTripDetail(t,{lat:g.lat,lng:g.lng});
-  showFrontTripDetail(t,{lat:g.lat,lng:g.lng});
-  try{if(map)map.closePopup();}catch(e){}
+  showPopupTimeList(groupId,dateKey,dg,box);
 }
+
+function showPopupTimeList(groupId,dateKey,dg,box){
+  const trips=(dg.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));
+  const items=trips.map(t=>{
+    const label=tripTimeLabelForPopup(t);
+    return `<a class="popupBtn" href="#" data-popup-group-id="${esc(groupId)}" data-popup-trip-id="${esc(t.trip_id)}">${esc(label)} ${esc(title(t))}</a>`;
+  }).join(' ');
+
+  const html=`<div class="popupTitle">${esc(dg.label)} の履歴 ${trips.length}件</div><div class="popupMeta">見たい時刻を選択してください。</div>${items||'<div class="popupMeta">履歴がありません。</div>'}`;
+
+  try{
+    if(box){
+      box.innerHTML=html;
+      return;
+    }
+    if(map){
+      const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));
+      if(g){
+        L.popup().setLatLng([g.lat,g.lng]).setContent(html).openOn(map);
+        return;
+      }
+    }
+  }catch(e){}
+
+  showFrontTimeList(groupId,dateKey,dg);
+}
+
+function showFrontTimeList(groupId,dateKey,dg){
+  const o=ensureFrontDetailBox();
+  const trips=(dg.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));
+  const items=trips.map(t=>{
+    const label=tripTimeLabelForPopup(t);
+    return `<button type="button" class="item" data-popup-group-id="${esc(groupId)}" data-popup-trip-id="${esc(t.trip_id)}"><div class="top"><span>${esc(label)}</span><span>${esc(title(t))}</span></div></button>`;
+  }).join('');
+
+  o.innerHTML=`<div class="cardHead"><div><h2>${esc(dg.label)} の履歴 ${trips.length}件</h2><p>見たい時刻を選択してください。</p></div><button id="frontDetailClose" type="button">閉じる</button></div><div class="list" style="margin-top:10px">${items||'<div class="emptyBox">履歴がありません。</div>'}</div>`;
+  o.style.display='block';
+
+  const b=document.getElementById('frontDetailClose');
+  if(b)b.onclick=closeFrontTripDetail;
+}
+
 function showPopupDateList(groupId,box){const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));if(g&&box)box.innerHTML=popup(g);}
 
 async function renderMap(){ensureMap();if(!groupLayer)return;groupLayer.clearLayers();const trips=await getAllTrips();groups=makeGroups(trips);for(const g of groups){const ic=L.divIcon({className:'',html:`<div class="${markerClass(g)}">${g.count}</div>`,iconSize:[38,38],iconAnchor:[19,19],popupAnchor:[0,-18]});L.marker([g.lat,g.lng],{icon:ic}).addTo(groupLayer).bindPopup(popup(g));}}
