@@ -302,6 +302,70 @@ function makeGroups(trips){
   );
 }
 function markerClass(g){if(selectedGroupId===g.group_id)return'cluster selected';if(g.distance_m!==null&&g.distance_m<=SAME_POINT_M)return'cluster near20';if(g.distance_m!==null&&g.distance_m<=SAME_AREA_M)return'cluster near100';return'cluster';}
+
+function markerLabelDateKey(g){
+  const t=g && g.latest ? g.latest : null;
+  return t ? tripDateKeyForPopup(t) : 'unknown';
+}
+
+function markerLabelLakeKey(g){
+  const t=g && g.latest ? g.latest : null;
+  return String(t && t.lake_name ? t.lake_name : '').trim();
+}
+
+function markerLabelTripForDate(g,dateKey){
+  const list=(g && Array.isArray(g.trips) ? g.trips : [])
+    .filter(t=>tripDateKeyForPopup(t)===dateKey)
+    .slice()
+    .sort((a,b)=>tms(a)-tms(b));
+
+  return list[0] || (g && g.latest ? g.latest : null);
+}
+
+function assignPointLabelsForGroups(gs){
+  const buckets=new Map();
+
+  for(const g of (gs||[])){
+    g._point_label='';
+    g._point_time='';
+
+    const dateKey=markerLabelDateKey(g);
+    const lakeKey=markerLabelLakeKey(g);
+    const rep=markerLabelTripForDate(g,dateKey);
+    const ms=rep ? tms(rep) : 0;
+
+    if(!dateKey || dateKey==='unknown' || !ms) continue;
+
+    const key=dateKey+'\n'+lakeKey;
+    if(!buckets.has(key)) buckets.set(key,[]);
+    buckets.get(key).push({g,ms});
+  }
+
+  for(const arr of buckets.values()){
+    if(arr.length<2) continue;
+
+    arr.sort((a,b)=>a.ms-b.ms);
+
+    arr.forEach((x,i)=>{
+      x.g._point_label='P'+(i+1);
+      x.g._point_time=tripTimeLabelForPopup({date_ms:x.ms});
+    });
+  }
+}
+
+function markerHtml(g){
+  const cls=markerClass(g);
+
+  if(g && g._point_label){
+    return `<div class="${cls}" style="width:56px;height:44px;line-height:1.05;font-weight:900;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:16px;position:relative;">
+      <div style="font-size:14px;line-height:1;">${esc(g._point_label)}</div>
+      <div style="font-size:12px;line-height:1.1;">${esc(g._point_time||'')}</div>
+      <div style="position:absolute;right:-7px;top:-7px;min-width:18px;height:18px;line-height:18px;border-radius:9px;background:#fff;color:#0f172a;border:2px solid currentColor;font-size:11px;">${esc(g.count)}</div>
+    </div>`;
+  }
+
+  return `<div class="${cls}">${g.count}</div>`;
+}
 function popup(g){
   const dateGroups=(g.date_groups&&g.date_groups.length)?g.date_groups:buildDateGroupsForTrips(g.trips||[]);
   const dates=dateGroups.map(d=>{
@@ -383,7 +447,31 @@ function showFrontTimeList(groupId,dateKey,dg){
 
 function showPopupDateList(groupId,box){const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));if(g&&box)box.innerHTML=popup(g);}
 
-async function renderMap(){ensureMap();if(!groupLayer)return;groupLayer.clearLayers();const trips=await getAllTrips();groups=makeGroups(trips);for(const g of groups){const ic=L.divIcon({className:'',html:`<div class="${markerClass(g)}">${g.count}</div>`,iconSize:[38,38],iconAnchor:[19,19],popupAnchor:[0,-18]});L.marker([g.lat,g.lng],{icon:ic}).addTo(groupLayer).bindPopup(popup(g));}}
+async function renderMap(){
+  ensureMap();
+  if(!groupLayer)return;
+
+  groupLayer.clearLayers();
+
+  const trips=await getAllTrips();
+  groups=makeGroups(trips);
+  assignPointLabelsForGroups(groups);
+
+  for(const g of groups){
+    const hasPointLabel=!!g._point_label;
+    const ic=L.divIcon({
+      className:'',
+      html:markerHtml(g),
+      iconSize:hasPointLabel?[56,44]:[38,38],
+      iconAnchor:hasPointLabel?[28,22]:[19,19],
+      popupAnchor:hasPointLabel?[0,-22]:[0,-18]
+    });
+
+    L.marker([g.lat,g.lng],{icon:ic})
+      .addTo(groupLayer)
+      .bindPopup(popup(g));
+  }
+}
 
 function updatePosition(pos,zoomNow=false,doInitialFit=true){currentPos={lat:Number(pos.lat),lng:Number(pos.lng),acc:Number(pos.acc||0),t:Number(pos.t||nowMs())};$('latView').textContent=currentPos.lat.toFixed(7);$('lngView').textContent=currentPos.lng.toFixed(7);$('accView').textContent=currentPos.acc?`±${Math.round(currentPos.acc)}m`:'-';$('timeView').textContent=fmtTime(currentPos.t);$('locStatus').textContent='現在地を確認しました。';setBadge('locBadge','取得済み',currentPos.acc>0&&currentPos.acc<=20?'good':'warn');metaSet('last_pos',currentPos);drawCurrent(zoomNow);refreshAll().then(()=>{if(doInitialFit)fitInitialLakeViewOnce(true);});}
 function locate(manual=false){
