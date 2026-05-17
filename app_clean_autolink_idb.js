@@ -132,13 +132,255 @@ async function migrateOld(force=false){if(!force && await metaGet('old_migrated'
 
 function ensureMap(){if(map)return true;if(!window.L){$('mapStatus').textContent='地図ライブラリ未読込（オフラインGPS連携は可）';return false;}map=L.map('map',{zoomControl:true}).setView(DEFAULT_CENTER,5);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},100);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},600);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);groupLayer=L.layerGroup().addTo(map);return true;}
 function drawCurrent(zoomNow=false){if(!currentPos||!ensureMap())return;const a=Number(currentPos.lat),b=Number(currentPos.lng),acc=Number(currentPos.acc||0);[currentMarker,accCircle,cur20,cur100].forEach(x=>{if(x)x.remove();});currentMarker=L.marker([a,b]).addTo(map).bindPopup('現在地');if(acc>0)accCircle=L.circle([a,b],{radius:acc}).addTo(map);cur20=L.circle([a,b],{radius:SAME_POINT_M,weight:2,fillOpacity:.04}).addTo(map);cur100=L.circle([a,b],{radius:SAME_AREA_M,weight:2,fillOpacity:.015}).addTo(map);if(zoomNow)map.setView([a,b],19);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},50);$('btnFitNear').disabled=false;$('btnSaveScroll').disabled=false;$('btnSaveTrip').disabled=false;}
-function makeGroups(trips){const valid=trips.filter(x=>validLatLng(lat(x),lng(x))).slice().sort((a,b)=>tms(b)-tms(a));const gs=[];for(const t of valid){let best=null,bd=Infinity;for(const g of gs){const dd=dist(lat(t),lng(t),g.lat,g.lng);if(dd<=SAME_POINT_M&&dd<bd){best=g;bd=dd;}}if(best){best.trips.push(t);const n=best.trips.length;best.lat=(best.lat*(n-1)+lat(t))/n;best.lng=(best.lng*(n-1)+lng(t))/n;}else gs.push({group_id:'G'+gs.length+'_'+t.trip_id,lat:lat(t),lng:lng(t),trips:[t]});}for(const g of gs){g.trips.sort((a,b)=>tms(b)-tms(a));g.latest=g.trips[0];g.count=g.trips.length;g.distance_m=currentPos?dist(Number(currentPos.lat),Number(currentPos.lng),g.lat,g.lng):null;g.latest_ms=tms(g.latest);}return gs.sort((a,b)=>currentPos?((a.distance_m??Infinity)-(b.distance_m??Infinity)):(b.latest_ms-a.latest_ms));}
+
+function mapPlaceLakeKey(t){
+  return String(t && t.lake_name ? t.lake_name : '').trim();
+}
+
+function sameLakeForMapPlace(a,b){
+  const la=mapPlaceLakeKey(a);
+  const lb=mapPlaceLakeKey(b);
+
+  // 両方に湖名がある場合だけ、違う湖名を別地点扱いにする。
+  // どちらかが空の場合は、表示漏れを避けるため距離判定へ任せる。
+  if(la && lb) return la === lb;
+  return true;
+}
+
+function tripDateKeyForPopup(t){
+  const d=new Date(tms(t));
+  if(Number.isNaN(d.getTime())) return 'unknown';
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+
+function tripDateLabelForPopup(dateKey){
+  if(!dateKey || dateKey==='unknown') return '日付不明';
+  const m=String(dateKey).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return String(dateKey);
+  return `${m[1]}/${m[2]}/${m[3]}`;
+}
+
+function tripTimeLabelForPopup(t){
+  const n=tms(t);
+  if(!n) return '時刻不明';
+  const d=new Date(n);
+  if(Number.isNaN(d.getTime())) return '時刻不明';
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function tripDepthLabelForTimeList(t){
+  const s=t && t.pico_summary ? t.pico_summary : null;
+  const st=String((t && t.depth_status) || (s && s.depth_status) || '').trim();
+
+  if(st==='not_measured') return '未底取り';
+
+  const candidates=[
+    t && t.fishfinder_depth_m,
+    s && s.max_depth_m,
+    s && s.fishfinder_depth_m
+  ];
+
+  for(const c of candidates){
+    const n=Number(c);
+    if(Number.isFinite(n) && n>0){
+      return '水深 '+n.toFixed(2).replace(/\.?0+$/,'')+'m';
+    }
+  }
+
+  return '';
+}
+
+function tripLineSinkerLabelForTimeList(t){
+  const arr=[];
+  const line=String((t && t.line_no) || '').trim();
+  const sinker=String((t && t.sinker_g) || '').trim();
+
+  if(line) arr.push(line);
+  if(sinker) arr.push(sinker+'g');
+
+  return arr.join(' / ');
+}
+
+function tripBriefMetaForTimeList(t){
+  const arr=[
+    tripDepthLabelForTimeList(t),
+    tripLineSinkerLabelForTimeList(t)
+  ].filter(Boolean);
+
+  return arr.join(' / ');
+}
+
+function representativeTripForDate(trips){
+  const list=(trips||[]).slice().sort((a,b)=>{
+    const au=Number(a.updated_ms||0);
+    const bu=Number(b.updated_ms||0);
+    if(au!==bu) return bu-au;
+    return tms(b)-tms(a);
+  });
+
+  return list[0] || null;
+}
+
+function buildDateGroupsForTrips(trips){
+  const m=new Map();
+
+  for(const t of (trips||[])){
+    const k=tripDateKeyForPopup(t);
+    if(!m.has(k)){
+      m.set(k,{date_key:k,label:tripDateLabelForPopup(k),trips:[]});
+    }
+    m.get(k).trips.push(t);
+  }
+
+  const arr=Array.from(m.values());
+
+  for(const d of arr){
+    d.trips.sort((a,b)=>tms(b)-tms(a));
+    d.representative=representativeTripForDate(d.trips);
+    d.latest_ms=d.representative?tms(d.representative):0;
+  }
+
+  arr.sort((a,b)=>b.latest_ms-a.latest_ms);
+  return arr;
+}
+
+function makeGroups(trips){
+  const valid=trips
+    .filter(x=>validLatLng(lat(x),lng(x)))
+    .slice()
+    .sort((a,b)=>tms(b)-tms(a));
+
+  const gs=[];
+  const MAP_GROUP_M=10;
+
+  for(const t of valid){
+    let best=null;
+    let bd=Infinity;
+
+    for(const g of gs){
+      if(!sameLakeForMapPlace(t,g.latest)) continue;
+
+      // グループ中心を平均で動かさず、場所アンカーから判定する。
+      // これにより、新規地点で過去ピンが引っ張られて移動する事故を避ける。
+      const dd=dist(lat(t),lng(t),g.anchor_lat,g.anchor_lng);
+      if(dd<MAP_GROUP_M && dd<bd){
+        best=g;
+        bd=dd;
+      }
+    }
+
+    if(best){
+      best.trips.push(t);
+      // anchor_lat / anchor_lng は固定。保存データも変更しない。
+    }else{
+      gs.push({
+        group_id:'G'+gs.length+'_'+t.trip_id,
+        anchor_lat:lat(t),
+        anchor_lng:lng(t),
+        lat:lat(t),
+        lng:lng(t),
+        trips:[t],
+        latest:t
+      });
+    }
+  }
+
+  for(const g of gs){
+    g.trips.sort((a,b)=>tms(b)-tms(a));
+    g.latest=g.trips[0];
+    g.date_groups=buildDateGroupsForTrips(g.trips);
+    g.trip_count=g.trips.length;
+    g.count=g.date_groups.length;
+    g.distance_m=currentPos?dist(Number(currentPos.lat),Number(currentPos.lng),g.lat,g.lng):null;
+    g.latest_ms=tms(g.latest);
+  }
+
+  return gs.sort((a,b)=>
+    currentPos
+      ? ((a.distance_m??Infinity)-(b.distance_m??Infinity))
+      : (b.latest_ms-a.latest_ms)
+  );
+}
 function markerClass(g){if(selectedGroupId===g.group_id)return'cluster selected';if(g.distance_m!==null&&g.distance_m<=SAME_POINT_M)return'cluster near20';if(g.distance_m!==null&&g.distance_m<=SAME_AREA_M)return'cluster near100';return'cluster';}
-function popup(g){const trips=(g.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));const dates=trips.map(t=>`<a class="popupBtn" href="#" data-popup-group-id="${esc(g.group_id)}" data-popup-trip-id="${esc(t.trip_id)}">${esc(fmtTime(tms(t)).split(' ')[0])}</a>`).join(' ');return`<div class="popupTitle">この地点の過去 ${g.count}回</div><div class="popupMeta">見たい日付を選択してください。</div>${dates||'<div class="popupMeta">履歴がありません。</div>'}`;}
+function popup(g){
+  const dateGroups=(g.date_groups&&g.date_groups.length)?g.date_groups:buildDateGroupsForTrips(g.trips||[]);
+  const dates=dateGroups.map(d=>{
+    const suffix=(d.trips&&d.trips.length>1)?` (${d.trips.length})`:'';
+    return `<a class="popupBtn" href="#" data-popup-group-id="${esc(g.group_id)}" data-popup-date-key="${esc(d.date_key)}">${esc(d.label + suffix)}</a>`;
+  }).join(' ');
+
+  return`<div class="popupTitle">この地点の過去 ${dateGroups.length}日</div><div class="popupMeta">見たい日付を選択してください。</div>${dates||'<div class="popupMeta">履歴がありません。</div>'}`;
+}
 function ensureFrontDetailBox(){let o=document.getElementById('frontTripDetailOverlay');if(o)return o;o=document.createElement('div');o.id='frontTripDetailOverlay';o.style.cssText='display:none;position:fixed;z-index:99999;left:10px;right:10px;top:10px;max-height:86vh;overflow:auto;background:#fff;color:#0f172a;border:3px solid #0b84ff;border-radius:18px;box-shadow:0 18px 60px rgba(0,0,0,.45);padding:14px;';document.body.appendChild(o);return o;}
 function closeFrontTripDetail(){const o=document.getElementById('frontTripDetailOverlay');if(o)o.style.display='none';}
 function showFrontTripDetail(t,base=null){const o=ensureFrontDetailBox();o.innerHTML=`<div class="cardHead"><div><h2>${esc(fmtTime(tms(t)).split(' ')[0])}　${esc(title(t))}</h2><p>この釣行回の詳細</p></div><button id="frontDetailClose" type="button">閉じる</button></div><div class="summaryBox" style="margin-top:10px">${detailHtml(t,base)}</div>`;o.style.display='block';const b=document.getElementById('frontDetailClose');if(b)b.onclick=closeFrontTripDetail;}
 async function showPopupTripDetail(groupId,tripId,box){const trips=await getAllTrips();const t=trips.find(x=>String(x.trip_id)===String(tripId));if(!t)return;let g=(groups||[]).find(x=>String(x.group_id)===String(groupId));if(!g){g=(groups||[]).find(x=>(x.trips||[]).some(y=>String(y.trip_id)===String(tripId)))||null;}selectedTripId=t.trip_id;selectedGroupId=g?g.group_id:selectedGroupId;showTripDetail(t,g?{lat:g.lat,lng:g.lng}:null);showFrontTripDetail(t,g?{lat:g.lat,lng:g.lng}:null);try{if(map)map.closePopup();}catch(e){}}
+async function showPopupDateDetail(groupId,dateKey,box){
+  if(groups.length===0) groups=makeGroups(await getAllTrips());
+
+  const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));
+  if(!g) return;
+
+  const dateGroups=(g.date_groups&&g.date_groups.length)?g.date_groups:buildDateGroupsForTrips(g.trips||[]);
+  const dg=dateGroups.find(x=>String(x.date_key)===String(dateKey));
+  if(!dg || !Array.isArray(dg.trips) || dg.trips.length===0) return;
+
+  if(dg.trips.length===1){
+    showPopupTripDetail(groupId,dg.trips[0].trip_id,box);
+    return;
+  }
+
+  showPopupTimeList(groupId,dateKey,dg,box);
+}
+
+function showPopupTimeList(groupId,dateKey,dg,box){
+  const trips=(dg.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));
+  const items=trips.map(t=>{
+    const label=tripTimeLabelForPopup(t);
+    const meta=tripBriefMetaForTimeList(t);
+    const text=meta ? `${label}　${meta}` : label;
+    return `<a class="popupBtn" href="#" data-popup-group-id="${esc(groupId)}" data-popup-trip-id="${esc(t.trip_id)}">${esc(text)}</a>`;
+  }).join(' ');
+
+  const html=`<div class="popupTitle">${esc(dg.label)} の履歴 ${trips.length}件</div><div class="popupMeta">見たい時刻を選択してください。</div>${items||'<div class="popupMeta">履歴がありません。</div>'}`;
+
+  try{
+    if(box){
+      box.innerHTML=html;
+      return;
+    }
+
+    if(map){
+      const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));
+      if(g){
+        L.popup().setLatLng([g.lat,g.lng]).setContent(html).openOn(map);
+        return;
+      }
+    }
+  }catch(e){}
+
+  showFrontTimeList(groupId,dateKey,dg);
+}
+
+function showFrontTimeList(groupId,dateKey,dg){
+  const o=ensureFrontDetailBox();
+  const trips=(dg.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));
+  const items=trips.map(t=>{
+    const label=tripTimeLabelForPopup(t);
+    const meta=tripBriefMetaForTimeList(t);
+
+    return `<button type="button" class="item" data-popup-group-id="${esc(groupId)}" data-popup-trip-id="${esc(t.trip_id)}"><div class="top"><span>${esc(label)}</span><span>${esc(title(t))}</span></div><div class="body">${esc(meta || '詳細を表示')}</div></button>`;
+  }).join('');
+
+  o.innerHTML=`<div class="cardHead"><div><h2>${esc(dg.label)} の履歴 ${trips.length}件</h2><p>見たい時刻を選択してください。</p></div><button id="frontDetailClose" type="button">閉じる</button></div><div class="list" style="margin-top:10px">${items||'<div class="emptyBox">履歴がありません。</div>'}</div>`;
+  o.style.display='block';
+
+  const b=document.getElementById('frontDetailClose');
+  if(b)b.onclick=closeFrontTripDetail;
+}
+
+
+
 function showPopupDateList(groupId,box){const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));if(g&&box)box.innerHTML=popup(g);}
 
 async function renderMap(){ensureMap();if(!groupLayer)return;groupLayer.clearLayers();const trips=await getAllTrips();groups=makeGroups(trips);for(const g of groups){const ic=L.divIcon({className:'',html:`<div class="${markerClass(g)}">${g.count}</div>`,iconSize:[38,38],iconAnchor:[19,19],popupAnchor:[0,-18]});L.marker([g.lat,g.lng],{icon:ic}).addTo(groupLayer).bindPopup(popup(g));}}
@@ -319,6 +561,14 @@ $('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitN
     ev.preventDefault();ev.stopPropagation();
     const box=pd.closest('.leaflet-popup-content');
     showPopupTripDetail(pd.getAttribute('data-popup-group-id'),pd.getAttribute('data-popup-trip-id'),box);
+    return;
+  }
+
+  const pdate=ev.target.closest('[data-popup-date-key]');
+  if(pdate){
+    ev.preventDefault();ev.stopPropagation();
+    const box=pdate.closest('.leaflet-popup-content');
+    showPopupDateDetail(pdate.getAttribute('data-popup-group-id'),pdate.getAttribute('data-popup-date-key'),box);
     return;
   }
 
