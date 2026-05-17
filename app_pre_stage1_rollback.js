@@ -381,96 +381,9 @@ function showFrontTimeList(groupId,dateKey,dg){
 
 
 
-function showFrontDateList(groupId){
-  const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));
-  if(!g) return;
-
-  const o=ensureFrontDetailBox();
-  const dateGroups=(g.date_groups&&g.date_groups.length)?g.date_groups:buildDateGroupsForTrips(g.trips||[]);
-  const placeTitle=title(g.latest||((g.trips&&g.trips[0])||{}));
-
-  const items=dateGroups.map(d=>{
-    const suffix=(d.trips&&d.trips.length>1)?` (${d.trips.length})`:'';
-    const rep=d.representative||representativeTripForDate(d.trips||[]);
-    const meta=rep?tripBriefMetaForTimeList(rep):'この日の履歴を表示';
-    return `
-      <button type="button" class="item" data-front-group-id="${esc(groupId)}" data-front-date-key="${esc(d.date_key)}">
-        <b>${esc(d.label+suffix)}</b><br>
-        <span>${esc(meta||'この日の履歴を表示')}</span>
-      </button>
-    `;
-  }).join('');
-
-  o.innerHTML=`
-    <h2>${esc(placeTitle)}</h2>
-    <p style="font-size:18px;font-weight:700;margin:6px 0 12px;">
-      この地点の過去 ${dateGroups.length}日
-    </p>
-    <p style="font-size:16px;margin:0 0 12px;">
-      見たい日付を選択してください。
-    </p>
-    <button id="frontDetailClose" type="button" style="font-size:18px;font-weight:800;padding:10px 16px;margin:0 0 12px;border-radius:12px;">
-      閉じる
-    </button>
-    <div class="list" style="margin-top:10px">${items||'<div class="emptyBox">履歴がありません。</div>'}</div>
-  `;
-
-  o.style.display='block';
-
-  const b=document.getElementById('frontDetailClose');
-  if(b) b.onclick=closeFrontTripDetail;
-}
-
-async function showFrontDateDetail(groupId,dateKey){
-  if(groups.length===0) groups=makeGroups(await getAllTrips());
-
-  const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));
-  if(!g) return;
-
-  const dateGroups=(g.date_groups&&g.date_groups.length)?g.date_groups:buildDateGroupsForTrips(g.trips||[]);
-  const dg=dateGroups.find(x=>String(x.date_key)===String(dateKey));
-
-  if(!dg || !Array.isArray(dg.trips) || dg.trips.length===0) return;
-
-  selectedGroupId=g.group_id;
-
-  if(dg.trips.length===1){
-    await showPopupTripDetail(groupId,dg.trips[0].trip_id,null);
-    return;
-  }
-
-  showFrontTimeList(groupId,dateKey,dg);
-}
-
 function showPopupDateList(groupId,box){const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));if(g&&box)box.innerHTML=popup(g);}
 
-async function renderMap(){
-  ensureMap();
-  if(!groupLayer) return;
-
-  groupLayer.clearLayers();
-
-  const trips=await getAllTrips();
-  groups=makeGroups(trips);
-
-  for(const g of groups){
-    const ic=L.divIcon({
-      className:'',
-      html:`<div class="${markerClass(g)}">${g.count}</div>`,
-      iconSize:[38,38],
-      iconAnchor:[19,19],
-      popupAnchor:[0,-18]
-    });
-
-    const marker=L.marker([g.lat,g.lng],{icon:ic})
-      .addTo(groupLayer)
-      .bindPopup(popup(g));
-
-    marker.on('click',()=>{
-      showFrontDateList(g.group_id);
-    });
-  }
-}
+async function renderMap(){ensureMap();if(!groupLayer)return;groupLayer.clearLayers();const trips=await getAllTrips();groups=makeGroups(trips);for(const g of groups){const ic=L.divIcon({className:'',html:`<div class="${markerClass(g)}">${g.count}</div>`,iconSize:[38,38],iconAnchor:[19,19],popupAnchor:[0,-18]});L.marker([g.lat,g.lng],{icon:ic}).addTo(groupLayer).bindPopup(popup(g));}}
 
 function updatePosition(pos,zoomNow=false,doInitialFit=true){currentPos={lat:Number(pos.lat),lng:Number(pos.lng),acc:Number(pos.acc||0),t:Number(pos.t||nowMs())};$('latView').textContent=currentPos.lat.toFixed(7);$('lngView').textContent=currentPos.lng.toFixed(7);$('accView').textContent=currentPos.acc?`±${Math.round(currentPos.acc)}m`:'-';$('timeView').textContent=fmtTime(currentPos.t);$('locStatus').textContent='現在地を確認しました。';setBadge('locBadge','取得済み',currentPos.acc>0&&currentPos.acc<=20?'good':'warn');metaSet('last_pos',currentPos);drawCurrent(zoomNow);refreshAll().then(()=>{if(doInitialFit)fitInitialLakeViewOnce(true);});}
 function locate(manual=false){
@@ -648,17 +561,6 @@ $('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitN
     ev.preventDefault();ev.stopPropagation();
     const box=pd.closest('.leaflet-popup-content');
     showPopupTripDetail(pd.getAttribute('data-popup-group-id'),pd.getAttribute('data-popup-trip-id'),box);
-    return;
-  }
-
-  const fdate=ev.target.closest('[data-front-date-key]');
-  if(fdate){
-    ev.preventDefault();
-    ev.stopPropagation();
-    showFrontDateDetail(
-      fdate.getAttribute('data-front-group-id'),
-      fdate.getAttribute('data-front-date-key')
-    );
     return;
   }
 
