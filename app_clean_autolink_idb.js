@@ -100,6 +100,32 @@ function metaGet(k){return new Promise(res=>{const r=st(STORE_META).get(k);r.ons
 function metaSet(k,v){return new Promise(res=>{const tx=db.transaction(STORE_META,'readwrite');tx.objectStore(STORE_META).put({key:k,value:v});tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);});}
 function clearDb(){return new Promise(res=>{const tx=db.transaction([STORE_TRIPS,STORE_META],'readwrite');tx.objectStore(STORE_TRIPS).clear();tx.objectStore(STORE_META).clear();tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);});}
 
+function deleteIndexedDbByName(name){
+  return new Promise(resolve=>{
+    try{
+      if(db && name===DB_NAME){
+        try{ db.close(); }catch(e){}
+      }
+
+      const req=indexedDB.deleteDatabase(name);
+
+      req.onsuccess=()=>resolve({name,ok:true,status:'deleted'});
+      req.onerror=()=>resolve({name,ok:false,status:'error',error:String(req.error||'')});
+      req.onblocked=()=>resolve({name,ok:false,status:'blocked'});
+    }catch(e){
+      resolve({name,ok:false,status:'exception',error:String(e&&e.message?e.message:e)});
+    }
+  });
+}
+
+async function clearAllWakasagiDbs(){
+  const results=[];
+  results.push(await deleteIndexedDbByName(DB_NAME));
+  results.push(await deleteIndexedDbByName(OLD_DB_NAME));
+  return results;
+}
+
+
 function normalizeOld(s){const a=Number(s.lat),b=Number(s.lng); if(!validLatLng(a,b))return null;return{trip_id:s.trip_id||s.spot_id||genId('T'),migrated_from:s.spot_id||'',date_ms:Number(s.start_ms||s.created_ms||nowMs()),lat:a,lng:b,accuracy_m:Number(s.accuracy_m||0),location_time_ms:Number(s.location_time_ms||s.start_ms||nowMs()),lake_name:s.lake_name||'',point_name:s.point_name||'',line_no:s.line_no||'',sinker_g:s.sinker_g||'',fishfinder_depth_m:s.fishfinder_depth_m||s.fishfinder_m||'',water_temp_c:s.water_temp_c||'',weather:s.weather||'',wind:s.wind||'',memo:s.memo||'',created_ms:Number(s.created_ms||s.start_ms||nowMs()),updated_ms:Number(s.updated_ms||s.start_ms||nowMs())};}
 function openOld(){return new Promise(res=>{const r=indexedDB.open(OLD_DB_NAME);r.onsuccess=()=>res(r.result);r.onerror=()=>res(null);r.onblocked=()=>res(null);});}
 async function migrateOld(force=false){if(!force && await metaGet('old_migrated'))return 0;let old=await openOld();if(!old||!old.objectStoreNames.contains(OLD_STORE_SPOTS)){await metaSet('old_migrated',true);return 0;}const rows=await new Promise(res=>{const r=old.transaction(OLD_STORE_SPOTS,'readonly').objectStore(OLD_STORE_SPOTS).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([]);});let c=0;const cur=await getAllTrips();const exist=new Set(cur.map(x=>String(x.migrated_from||x.trip_id)));for(const row of rows){const t=normalizeOld(row);if(!t)continue;if(!force&&exist.has(String(t.migrated_from||t.trip_id)))continue;await putTrip(t);c++;}await metaSet('old_migrated',true);return c;}
@@ -178,7 +204,17 @@ async function exportDb(){const trips=await getAllTrips();downloadBlob(`wakasagi
 async function importPayload(payload){const rows=Array.isArray(payload)?payload:(payload.trips||payload.trip_records||payload.spots||[]);if(!Array.isArray(rows))return-1;let c=0;for(const r of rows){let t=r.trip_id?r:normalizeOld(r);if(!t)continue;t.trip_id=t.trip_id||genId('T');t.date_ms=Number(t.date_ms||t.start_ms||nowMs());t.lat=Number(t.lat);t.lng=Number(t.lng);if(!validLatLng(t.lat,t.lng))continue;t.updated_ms=nowMs();await putTrip(t);c++;}return c;}
 async function initPwa(){if('serviceWorker'in navigator){try{const reg=await navigator.serviceWorker.register('./service-worker.js?v=auto_gps_20260514');try{await reg.update();}catch(e){}}catch(e){}}}
 async function init(){hidePointHistoryCard();hideSelectedTripDetailCard();if(window.isSecureContext)setBadge('secureBadge','GPS可','good');else setBadge('secureBadge','HTTPS必要','bad');db=await openDb();ensureMap();$('tripDate').value=toLocal(nowMs());const n=await migrateOld(false);if(n>0)$('mapStatus').textContent=`旧データ${n}件を移行しました。`;
-$('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitNear').onclick=fitNear;$('btnSaveScroll').onclick=()=>$('tripDate').scrollIntoView({behavior:'smooth',block:'center'});$('btnSaveTrip').onclick=saveTrip;$('btnLoadSelected').onclick=()=>selectedTripId&&loadToForm(selectedTripId);$('btnUpdateTrip').onclick=updateTrip;$('btnClearForm').onclick=clearForm;$('btnExport').onclick=exportDb;$('btnImport').onclick=()=>$('importFile').click();$('importFile').onchange=async e=>{const f=e.target.files&&e.target.files[0];if(!f)return;let p;try{p=JSON.parse(await f.text());}catch(err){alert('JSONを読めません。');return;}const c=await importPayload(p);alert(`${c}件を読み込みました。`);await refreshAll();};$('btnMigrate').onclick=async()=>{const c=await migrateOld(true);alert(`旧データ移行 ${c}件`);await refreshAll();};$('btnClearDb').onclick=async()=>{if(confirm('テストDBを消去しますか？')){await new Promise(res=>{const tx=db.transaction([STORE_TRIPS,STORE_META],'readwrite');tx.objectStore(STORE_TRIPS).clear();tx.objectStore(STORE_META).clear();tx.oncomplete=()=>res();});location.reload();}};$('searchBox').oninput=renderAllList;$('sortMode').onchange=renderAllList;document.addEventListener('click',ev=>{
+$('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitNear').onclick=fitNear;$('btnSaveScroll').onclick=()=>$('tripDate').scrollIntoView({behavior:'smooth',block:'center'});$('btnSaveTrip').onclick=saveTrip;$('btnLoadSelected').onclick=()=>selectedTripId&&loadToForm(selectedTripId);$('btnUpdateTrip').onclick=updateTrip;$('btnClearForm').onclick=clearForm;$('btnExport').onclick=exportDb;$('btnImport').onclick=()=>$('importFile').click();$('importFile').onchange=async e=>{const f=e.target.files&&e.target.files[0];if(!f)return;let p;try{p=JSON.parse(await f.text());}catch(err){alert('JSONを読めません。');return;}const c=await importPayload(p);alert(`${c}件を読み込みました。`);await refreshAll();};$('btnMigrate').onclick=async()=>{const c=await migrateOld(true);alert(`旧データ移行 ${c}件`);await refreshAll();};$('btnClearDb').onclick=async()=>{
+  if(confirm('すべての釣行履歴DBを消去しますか？\n\n現在DBだけでなく、旧DBも削除します。\n旧データからの再移行も止まります。')){
+    const r=await clearAllWakasagiDbs();
+    const blocked=r.filter(x=>!x.ok && x.status==='blocked');
+    if(blocked.length){
+      alert('DB削除がブロックされました。\nこのページをすべて閉じてから、もう一度開き直してください。');
+      return;
+    }
+    location.reload();
+  }
+};$('searchBox').oninput=renderAllList;$('sortMode').onchange=renderAllList;document.addEventListener('click',ev=>{
   const pd=ev.target.closest('[data-popup-trip-id]');
   if(pd){
     ev.preventDefault();ev.stopPropagation();
