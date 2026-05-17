@@ -144,7 +144,106 @@ function showPopupDateList(groupId,box){const g=(groups||[]).find(x=>String(x.gr
 async function renderMap(){ensureMap();if(!groupLayer)return;groupLayer.clearLayers();const trips=await getAllTrips();groups=makeGroups(trips);for(const g of groups){const ic=L.divIcon({className:'',html:`<div class="${markerClass(g)}">${g.count}</div>`,iconSize:[38,38],iconAnchor:[19,19],popupAnchor:[0,-18]});L.marker([g.lat,g.lng],{icon:ic}).addTo(groupLayer).bindPopup(popup(g));}}
 
 function updatePosition(pos,zoomNow=false,doInitialFit=true){currentPos={lat:Number(pos.lat),lng:Number(pos.lng),acc:Number(pos.acc||0),t:Number(pos.t||nowMs())};$('latView').textContent=currentPos.lat.toFixed(7);$('lngView').textContent=currentPos.lng.toFixed(7);$('accView').textContent=currentPos.acc?`±${Math.round(currentPos.acc)}m`:'-';$('timeView').textContent=fmtTime(currentPos.t);$('locStatus').textContent='現在地を確認しました。';setBadge('locBadge','取得済み',currentPos.acc>0&&currentPos.acc<=20?'good':'warn');metaSet('last_pos',currentPos);drawCurrent(zoomNow);refreshAll().then(()=>{if(doInitialFit)fitInitialLakeViewOnce(true);});}
-function locate(manual=false){if(!window.isSecureContext){$('locStatus').textContent='HTTPSで開いていません。GitHub Pagesのhttps URLから開いてください。';setBadge('locBadge','HTTPS必要','bad');return;}if(!('geolocation'in navigator)){setBadge('locBadge','非対応','bad');return;}$('locStatus').textContent='現在地を取得しています...';setBadge('locBadge','取得中','warn');navigator.geolocation.getCurrentPosition(g=>{const c=g.coords;updatePosition({lat:Number(c.latitude),lng:Number(c.longitude),acc:Number(c.accuracy||0),t:Number(g.timestamp||nowMs())},manual,!manual);},async e=>{$('locStatus').textContent='現在地エラー: '+(e&&e.message?e.message:'取得できませんでした');setBadge('locBadge','未取得','bad');const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng))){$('locStatus').textContent='前回位置を表示しています。';setBadge('locBadge','前回位置','warn');updatePosition(last,manual,!manual);}},{enableHighAccuracy:true,timeout:15000,maximumAge:10000});}
+function locate(manual=false){
+  if(!window.isSecureContext){
+    $('locStatus').textContent='HTTPSで開いていません。GitHub Pagesのhttps URLから開いてください。';
+    setBadge('locBadge','HTTPS必要','bad');
+    return;
+  }
+
+  if(!('geolocation'in navigator)){
+    setBadge('locBadge','非対応','bad');
+    return;
+  }
+
+  $('locStatus').textContent='現在地を取得しています...';
+  setBadge('locBadge','取得中','warn');
+
+  const started=Date.now();
+  let best=null;
+  let watchId=null;
+  let finished=false;
+
+  function accept(pos){
+    const c=pos && pos.coords ? pos.coords : {};
+    const lat=Number(c.latitude);
+    const lng=Number(c.longitude);
+    const acc=Number(c.accuracy || Infinity);
+    const ts=Number(pos.timestamp || Date.now());
+
+    if(!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    if(ts && ts < started - 2000) return;
+
+    const cand={
+      lat,
+      lng,
+      acc:Number.isFinite(acc)?acc:0,
+      t:ts || Date.now()
+    };
+
+    if(!best || cand.acc < Number(best.acc || Infinity)){
+      best=cand;
+      $('locStatus').textContent='現在地を取得しています... 精度 ±'+Math.round(cand.acc||0)+'m';
+    }
+
+    if(cand.acc > 0 && cand.acc <= 30){
+      finish(true);
+    }
+  }
+
+  function finish(ok){
+    if(finished) return;
+    finished=true;
+
+    if(watchId!==null){
+      try{ navigator.geolocation.clearWatch(watchId); }catch(e){}
+    }
+
+    if(ok && best){
+      updatePosition(best,manual,!manual);
+      return;
+    }
+
+    $('locStatus').textContent='現在地エラー: 取得できませんでした';
+    setBadge('locBadge','未取得','bad');
+
+    metaGet('last_pos').then(last=>{
+      if(last&&validLatLng(Number(last.lat),Number(last.lng))){
+        $('locStatus').textContent='前回位置を表示しています。';
+        setBadge('locBadge','前回位置','warn');
+        updatePosition(last,manual,!manual);
+      }
+    });
+  }
+
+  try{
+    watchId=navigator.geolocation.watchPosition(pos=>{
+      accept(pos);
+    },err=>{
+      if(!best){
+        $('locStatus').textContent='現在地エラー: '+(err&&err.message?err.message:'取得できませんでした');
+      }
+    },{
+      enableHighAccuracy:true,
+      maximumAge:0,
+      timeout:20000
+    });
+
+    navigator.geolocation.getCurrentPosition(pos=>{
+      accept(pos);
+    },()=>{},{
+      enableHighAccuracy:true,
+      maximumAge:0,
+      timeout:20000
+    });
+
+    setTimeout(()=>{
+      finish(!!best);
+    },6500);
+  }catch(e){
+    finish(false);
+  }
+}
 function readForm(){return{date_ms:fromLocal($('tripDate').value),lake_name:$('lakeName').value.trim(),point_name:$('pointName').value.trim(),line_no:$('lineNo').value.trim(),sinker_g:$('sinkerG').value.trim(),fishfinder_depth_m:$('fishfinderDepthM').value.trim(),water_temp_c:$('waterTempC').value.trim(),weather:$('weather').value.trim(),wind:$('wind').value.trim(),memo:$('memo').value.trim()};}
 function fillForm(t){$('tripDate').value=toLocal(t.date_ms);$('lakeName').value=t.lake_name||'';$('pointName').value=t.point_name||'';$('lineNo').value=t.line_no||'';$('sinkerG').value=t.sinker_g||'';$('fishfinderDepthM').value=t.fishfinder_depth_m||'';$('waterTempC').value=t.water_temp_c||'';$('weather').value=t.weather||'';$('wind').value=t.wind||'';$('memo').value=t.memo||'';}
 function clearForm(){editingTripId=null;$('tripDate').value=toLocal(nowMs());['lakeName','pointName','lineNo','sinkerG','fishfinderDepthM','waterTempC','weather','wind','memo'].forEach(id=>$(id).value='');$('btnUpdateTrip').disabled=true;setBadge('saveBadge','待機中','');}
@@ -756,30 +855,81 @@ function v113_getFreshGps(){
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(pos=>{
-      const c=pos.coords || {};
+    const started=Date.now();
+    let best=null;
+    let watchId=null;
+    let done=false;
+
+    function cleanup(){
+      if(watchId!==null){
+        try{ navigator.geolocation.clearWatch(watchId); }catch(e){}
+      }
+    }
+
+    function accept(pos){
+      const c=pos && pos.coords ? pos.coords : {};
       const lat=Number(c.latitude);
       const lng=Number(c.longitude);
-      const acc=Number(c.accuracy || 0);
+      const acc=Number(c.accuracy || Infinity);
+      const ts=Number(pos.timestamp || Date.now());
 
-      if(!Number.isFinite(lat) || !Number.isFinite(lng)){
-        reject(new Error('取得した緯度経度が不正です。'));
-        return;
-      }
+      if(!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      if(ts && ts < started - 2000) return;
 
-      resolve({
+      const cand={
         lat,
         lng,
         acc:Number.isFinite(acc)?acc:0,
-        t:Number(pos.timestamp || Date.now())
+        t:ts || Date.now()
+      };
+
+      if(!best || cand.acc < Number(best.acc || Infinity)){
+        best=cand;
+      }
+
+      if(cand.acc > 0 && cand.acc <= 30){
+        finish(true);
+      }
+    }
+
+    function finish(ok){
+      if(done) return;
+      done=true;
+      cleanup();
+
+      if(ok && best){
+        resolve(best);
+      }else{
+        reject(new Error('現在地を取得できませんでした。'));
+      }
+    }
+
+    try{
+      watchId=navigator.geolocation.watchPosition(pos=>{
+        accept(pos);
+      },err=>{
+        // Auto linkではlast_posへフォールバックしない。
+      },{
+        enableHighAccuracy:true,
+        maximumAge:0,
+        timeout:20000
       });
-    },err=>{
-      reject(new Error(err && err.message ? err.message : '現在地を取得できませんでした。'));
-    },{
-      enableHighAccuracy:true,
-      timeout:18000,
-      maximumAge:0
-    });
+
+      navigator.geolocation.getCurrentPosition(pos=>{
+        accept(pos);
+      },()=>{},{
+        enableHighAccuracy:true,
+        maximumAge:0,
+        timeout:20000
+      });
+
+      setTimeout(()=>{
+        finish(!!best);
+      },6500);
+    }catch(e){
+      cleanup();
+      reject(new Error(e && e.message ? e.message : '現在地を取得できませんでした。'));
+    }
   });
 }
 
