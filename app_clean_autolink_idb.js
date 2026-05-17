@@ -7,7 +7,6 @@ const STORE_META = 'meta';
 const OLD_DB_NAME = 'wakasa_companion_v2';
 const OLD_STORE_SPOTS = 'fishing_spots';
 const SAME_POINT_M = 20;
-const MAP_GROUP_M = 10;
 const SAME_AREA_M = 100;
 const DEFAULT_CENTER = [36.2048, 138.2529];
 
@@ -107,234 +106,13 @@ async function migrateOld(force=false){if(!force && await metaGet('old_migrated'
 
 function ensureMap(){if(map)return true;if(!window.L){$('mapStatus').textContent='地図ライブラリ未読込（オフラインGPS連携は可）';return false;}map=L.map('map',{zoomControl:true}).setView(DEFAULT_CENTER,5);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},100);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},600);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);groupLayer=L.layerGroup().addTo(map);return true;}
 function drawCurrent(zoomNow=false){if(!currentPos||!ensureMap())return;const a=Number(currentPos.lat),b=Number(currentPos.lng),acc=Number(currentPos.acc||0);[currentMarker,accCircle,cur20,cur100].forEach(x=>{if(x)x.remove();});currentMarker=L.marker([a,b]).addTo(map).bindPopup('現在地');if(acc>0)accCircle=L.circle([a,b],{radius:acc}).addTo(map);cur20=L.circle([a,b],{radius:SAME_POINT_M,weight:2,fillOpacity:.04}).addTo(map);cur100=L.circle([a,b],{radius:SAME_AREA_M,weight:2,fillOpacity:.015}).addTo(map);if(zoomNow)map.setView([a,b],19);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},50);$('btnFitNear').disabled=false;$('btnSaveScroll').disabled=false;$('btnSaveTrip').disabled=false;}
-function tripDateKey(t){
-  const d=new Date(tms(t));
-  if(Number.isNaN(d.getTime())) return 'unknown';
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-}
-
-function tripDateLabelFromKey(k){
-  if(!k || k==='unknown') return '日付不明';
-  const p=String(k).split('-');
-  if(p.length!==3) return String(k);
-  return `${p[0]}/${p[1]}/${p[2]}`;
-}
-
-function tripTimeLabelForPopup(t){
-  const n=tms(t);
-  if(!n) return '時刻不明';
-  const d=new Date(n);
-  if(Number.isNaN(d.getTime())) return '時刻不明';
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function tripDepthLabelForTimeList(t){
-  const s=t && t.pico_summary ? t.pico_summary : null;
-  const st=String((t && t.depth_status) || (s && s.depth_status) || '').trim();
-
-  if(st==='not_measured') return '未底取り';
-
-  const candidates=[
-    t && t.fishfinder_depth_m,
-    s && s.max_depth_m,
-    s && s.fishfinder_depth_m
-  ];
-
-  for(const c of candidates){
-    const n=Number(c);
-    if(Number.isFinite(n) && n>0){
-      return '水深 '+n.toFixed(2).replace(/\.?0+$/,'')+'m';
-    }
-  }
-
-  return '';
-}
-
-function tripLineSinkerLabelForTimeList(t){
-  const arr=[];
-  const line=String((t && t.line_no) || '').trim();
-  const sinker=String((t && t.sinker_g) || '').trim();
-
-  if(line) arr.push(line);
-  if(sinker) arr.push(sinker+'g');
-
-  return arr.join(' / ');
-}
-
-function tripBriefMetaForTimeList(t){
-  const arr=[
-    tripDepthLabelForTimeList(t),
-    tripLineSinkerLabelForTimeList(t)
-  ].filter(Boolean);
-
-  return arr.join(' / ');
-}
-
-
-
-function tripLakeKey(t){
-  return String(t && t.lake_name ? t.lake_name : '').trim();
-}
-
-function sameLakeForPlaceGroup(a,b){
-  const la=tripLakeKey(a);
-  const lb=tripLakeKey(b);
-  if(la && lb) return la === lb;
-  return true;
-}
-
-function representativeTripForDate(trips){
-  const list=(trips||[]).slice().sort((a,b)=>{
-    const au=Number(a.updated_ms||0), bu=Number(b.updated_ms||0);
-    if(au!==bu) return bu-au;
-    return tms(b)-tms(a);
-  });
-  return list[0] || null;
-}
-
-function buildDateGroupsForTrips(trips){
-  const m=new Map();
-  for(const t of (trips||[])){
-    const k=tripDateKey(t);
-    if(!m.has(k)) m.set(k,{date_key:k,label:tripDateLabelFromKey(k),trips:[]});
-    m.get(k).trips.push(t);
-  }
-  const arr=Array.from(m.values());
-  for(const d of arr){
-    d.trips.sort((a,b)=>tms(b)-tms(a));
-    d.representative=representativeTripForDate(d.trips);
-    d.latest_ms=d.representative?tms(d.representative):0;
-  }
-  arr.sort((a,b)=>b.latest_ms-a.latest_ms);
-  return arr;
-}
-
-function makeGroups(trips){
-  const valid=trips
-    .filter(x=>validLatLng(lat(x),lng(x)))
-    .slice()
-    .sort((a,b)=>tms(b)-tms(a));
-
-  const gs=[];
-
-  for(const t of valid){
-    let best=null,bd=Infinity;
-
-    for(const g of gs){
-      if(!sameLakeForPlaceGroup(t,g.latest)) continue;
-      const dd=dist(lat(t),lng(t),g.lat,g.lng);
-      if(dd<MAP_GROUP_M && dd<bd){best=g;bd=dd;}
-    }
-
-    if(best){
-      best.trips.push(t);
-      const n=best.trips.length;
-      best.lat=(best.lat*(n-1)+lat(t))/n;
-      best.lng=(best.lng*(n-1)+lng(t))/n;
-    }else{
-      gs.push({group_id:'G'+gs.length+'_'+t.trip_id,lat:lat(t),lng:lng(t),trips:[t],latest:t});
-    }
-  }
-
-  for(const g of gs){
-    g.trips.sort((a,b)=>tms(b)-tms(a));
-    g.latest=g.trips[0];
-    g.date_groups=buildDateGroupsForTrips(g.trips);
-    g.trip_count=g.trips.length;
-    g.count=g.date_groups.length;
-    g.distance_m=currentPos?dist(Number(currentPos.lat),Number(currentPos.lng),g.lat,g.lng):null;
-    g.latest_ms=tms(g.latest);
-  }
-
-  return gs.sort((a,b)=>currentPos?((a.distance_m??Infinity)-(b.distance_m??Infinity)):(b.latest_ms-a.latest_ms));
-}
+function makeGroups(trips){const valid=trips.filter(x=>validLatLng(lat(x),lng(x))).slice().sort((a,b)=>tms(b)-tms(a));const gs=[];for(const t of valid){let best=null,bd=Infinity;for(const g of gs){const dd=dist(lat(t),lng(t),g.lat,g.lng);if(dd<=SAME_POINT_M&&dd<bd){best=g;bd=dd;}}if(best){best.trips.push(t);const n=best.trips.length;best.lat=(best.lat*(n-1)+lat(t))/n;best.lng=(best.lng*(n-1)+lng(t))/n;}else gs.push({group_id:'G'+gs.length+'_'+t.trip_id,lat:lat(t),lng:lng(t),trips:[t]});}for(const g of gs){g.trips.sort((a,b)=>tms(b)-tms(a));g.latest=g.trips[0];g.count=g.trips.length;g.distance_m=currentPos?dist(Number(currentPos.lat),Number(currentPos.lng),g.lat,g.lng):null;g.latest_ms=tms(g.latest);}return gs.sort((a,b)=>currentPos?((a.distance_m??Infinity)-(b.distance_m??Infinity)):(b.latest_ms-a.latest_ms));}
 function markerClass(g){if(selectedGroupId===g.group_id)return'cluster selected';if(g.distance_m!==null&&g.distance_m<=SAME_POINT_M)return'cluster near20';if(g.distance_m!==null&&g.distance_m<=SAME_AREA_M)return'cluster near100';return'cluster';}
-function popup(g){
-  const dateGroups=(g.date_groups&&g.date_groups.length)?g.date_groups:buildDateGroupsForTrips(g.trips||[]);
-  const dates=dateGroups.map(d=>{
-    const suffix=(d.trips&&d.trips.length>1)?` (${d.trips.length})`:'';
-    return `<a class="popupBtn" href="#" data-popup-group-id="${esc(g.group_id)}" data-popup-date-key="${esc(d.date_key)}">${esc(d.label + suffix)}</a>`;
-  }).join(' ');
-  return`<div class="popupTitle">この地点の過去 ${dateGroups.length}日</div><div class="popupMeta">見たい日付を選択してください。</div>${dates||'<div class="popupMeta">履歴がありません。</div>'}`;
-}
+function popup(g){const trips=(g.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));const dates=trips.map(t=>`<a class="popupBtn" href="#" data-popup-group-id="${esc(g.group_id)}" data-popup-trip-id="${esc(t.trip_id)}">${esc(fmtTime(tms(t)).split(' ')[0])}</a>`).join(' ');return`<div class="popupTitle">この地点の過去 ${g.count}回</div><div class="popupMeta">見たい日付を選択してください。</div>${dates||'<div class="popupMeta">履歴がありません。</div>'}`;}
 function ensureFrontDetailBox(){let o=document.getElementById('frontTripDetailOverlay');if(o)return o;o=document.createElement('div');o.id='frontTripDetailOverlay';o.style.cssText='display:none;position:fixed;z-index:99999;left:10px;right:10px;top:10px;max-height:86vh;overflow:auto;background:#fff;color:#0f172a;border:3px solid #0b84ff;border-radius:18px;box-shadow:0 18px 60px rgba(0,0,0,.45);padding:14px;';document.body.appendChild(o);return o;}
 function closeFrontTripDetail(){const o=document.getElementById('frontTripDetailOverlay');if(o)o.style.display='none';}
 function showFrontTripDetail(t,base=null){const o=ensureFrontDetailBox();o.innerHTML=`<div class="cardHead"><div><h2>${esc(fmtTime(tms(t)).split(' ')[0])}　${esc(title(t))}</h2><p>この釣行回の詳細</p></div><button id="frontDetailClose" type="button">閉じる</button></div><div class="summaryBox" style="margin-top:10px">${detailHtml(t,base)}</div>`;o.style.display='block';const b=document.getElementById('frontDetailClose');if(b)b.onclick=closeFrontTripDetail;}
-async function showPopupTripDetail(groupId,tripId,box){
-  const trips=await getAllTrips();
-  const t=trips.find(x=>String(x.trip_id)===String(tripId));
-  if(!t)return;
-  let g=(groups||[]).find(x=>String(x.group_id)===String(groupId));
-  if(!g){g=(groups||[]).find(x=>(x.trips||[]).some(y=>String(y.trip_id)===String(tripId)))||null;}
-  selectedTripId=t.trip_id;
-  selectedGroupId=g?g.group_id:selectedGroupId;
-  showTripDetail(t,g?{lat:g.lat,lng:g.lng}:null);
-  showFrontTripDetail(t,g?{lat:g.lat,lng:g.lng}:null);
-  try{if(map)map.closePopup();}catch(e){}
-}
-
-async function showPopupDateDetail(groupId,dateKey,box){
-  if(groups.length===0) groups=makeGroups(await getAllTrips());
-  let g=(groups||[]).find(x=>String(x.group_id)===String(groupId));
-  if(!g) return;
-
-  const dateGroups=(g.date_groups&&g.date_groups.length)?g.date_groups:buildDateGroupsForTrips(g.trips||[]);
-  const dg=dateGroups.find(x=>String(x.date_key)===String(dateKey));
-  if(!dg || !Array.isArray(dg.trips) || dg.trips.length===0) return;
-
-  if(dg.trips.length===1){
-    const t=dg.trips[0];
-    showPopupTripDetail(groupId,t.trip_id,box);
-    return;
-  }
-
-  showPopupTimeList(groupId,dateKey,dg,box);
-}
-
-function showPopupTimeList(groupId,dateKey,dg){
-  const trips=(dg.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));
-  const items=trips.map(t=>{
-    const label=tripTimeLabelForPopup(t);
-    const meta=tripBriefMetaForTimeList(t);
-    const text=meta ? `${label}　${meta}` : label;
-    return `<a class="popupBtn" href="#" data-popup-group-id="${esc(groupId)}" data-popup-trip-id="${esc(t.trip_id)}">${esc(text)}</a>`;
-  }).join(' ');
-
-  const html=`<div class="popupTitle">${esc(dg.label)} の履歴 ${trips.length}件</div><div class="popupMeta">見たい時刻を選択してください。</div>${items||'<div class="popupMeta">履歴がありません。</div>'}`;
-
-  try{
-    if(box){
-      box.innerHTML=html;
-      return;
-    }
-    if(map){
-      const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));
-      if(g){
-        L.popup().setLatLng([g.lat,g.lng]).setContent(html).openOn(map);
-        return;
-      }
-    }
-  }catch(e){}
-
-  showFrontTimeList(groupId,dateKey,dg);
-}
-
-function showFrontTimeList(groupId,dateKey,dg){
-  const o=ensureFrontDetailBox();
-  const trips=(dg.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));
-  const items=trips.map(t=>{
-    const label=tripTimeLabelForPopup(t);
-    const meta=tripBriefMetaForTimeList(t);
-    return `<button type="button" class="item" data-popup-group-id="${esc(groupId)}" data-popup-trip-id="${esc(t.trip_id)}"><div class="top"><span>${esc(label)}</span><span>${esc(title(t))}</span></div><div class="body">${esc(meta || '詳細を表示')}</div></button>`;
-  }).join('');
-
-  o.innerHTML=`<div class="cardHead"><div><h2>${esc(dg.label)} の履歴 ${trips.length}件</h2><p>見たい時刻を選択してください。</p></div><button id="frontDetailClose" type="button">閉じる</button></div><div class="list" style="margin-top:10px">${items||'<div class="emptyBox">履歴がありません。</div>'}</div>`;
-  o.style.display='block';
-
-  const b=document.getElementById('frontDetailClose');
-  if(b)b.onclick=closeFrontTripDetail;
-}
-
+async function showPopupTripDetail(groupId,tripId,box){const trips=await getAllTrips();const t=trips.find(x=>String(x.trip_id)===String(tripId));if(!t)return;let g=(groups||[]).find(x=>String(x.group_id)===String(groupId));if(!g){g=(groups||[]).find(x=>(x.trips||[]).some(y=>String(y.trip_id)===String(tripId)))||null;}selectedTripId=t.trip_id;selectedGroupId=g?g.group_id:selectedGroupId;showTripDetail(t,g?{lat:g.lat,lng:g.lng}:null);showFrontTripDetail(t,g?{lat:g.lat,lng:g.lng}:null);try{if(map)map.closePopup();}catch(e){}}
 function showPopupDateList(groupId,box){const g=(groups||[]).find(x=>String(x.group_id)===String(groupId));if(g&&box)box.innerHTML=popup(g);}
 
 async function renderMap(){ensureMap();if(!groupLayer)return;groupLayer.clearLayers();const trips=await getAllTrips();groups=makeGroups(trips);for(const g of groups){const ic=L.divIcon({className:'',html:`<div class="${markerClass(g)}">${g.count}</div>`,iconSize:[38,38],iconAnchor:[19,19],popupAnchor:[0,-18]});L.marker([g.lat,g.lng],{icon:ic}).addTo(groupLayer).bindPopup(popup(g));}}
@@ -401,14 +179,6 @@ async function importPayload(payload){const rows=Array.isArray(payload)?payload:
 async function initPwa(){if('serviceWorker'in navigator){try{const reg=await navigator.serviceWorker.register('./service-worker.js?v=auto_gps_20260514');try{await reg.update();}catch(e){}}catch(e){}}}
 async function init(){hidePointHistoryCard();hideSelectedTripDetailCard();if(window.isSecureContext)setBadge('secureBadge','GPS可','good');else setBadge('secureBadge','HTTPS必要','bad');db=await openDb();ensureMap();$('tripDate').value=toLocal(nowMs());const n=await migrateOld(false);if(n>0)$('mapStatus').textContent=`旧データ${n}件を移行しました。`;
 $('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitNear').onclick=fitNear;$('btnSaveScroll').onclick=()=>$('tripDate').scrollIntoView({behavior:'smooth',block:'center'});$('btnSaveTrip').onclick=saveTrip;$('btnLoadSelected').onclick=()=>selectedTripId&&loadToForm(selectedTripId);$('btnUpdateTrip').onclick=updateTrip;$('btnClearForm').onclick=clearForm;$('btnExport').onclick=exportDb;$('btnImport').onclick=()=>$('importFile').click();$('importFile').onchange=async e=>{const f=e.target.files&&e.target.files[0];if(!f)return;let p;try{p=JSON.parse(await f.text());}catch(err){alert('JSONを読めません。');return;}const c=await importPayload(p);alert(`${c}件を読み込みました。`);await refreshAll();};$('btnMigrate').onclick=async()=>{const c=await migrateOld(true);alert(`旧データ移行 ${c}件`);await refreshAll();};$('btnClearDb').onclick=async()=>{if(confirm('テストDBを消去しますか？')){await new Promise(res=>{const tx=db.transaction([STORE_TRIPS,STORE_META],'readwrite');tx.objectStore(STORE_TRIPS).clear();tx.objectStore(STORE_META).clear();tx.oncomplete=()=>res();});location.reload();}};$('searchBox').oninput=renderAllList;$('sortMode').onchange=renderAllList;document.addEventListener('click',ev=>{
-  const pdate=ev.target.closest('[data-popup-date-key]');
-  if(pdate){
-    ev.preventDefault();ev.stopPropagation();
-    const box=pdate.closest('.leaflet-popup-content');
-    showPopupDateDetail(pdate.getAttribute('data-popup-group-id'),pdate.getAttribute('data-popup-date-key'),box);
-    return;
-  }
-
   const pd=ev.target.closest('[data-popup-trip-id]');
   if(pd){
     ev.preventDefault();ev.stopPropagation();
