@@ -1,10 +1,11 @@
 'use strict';
 
-const DB_NAME = 'wakasagi_trip_map_v12';
+const DB_NAME = 'wakasagi_trip_map_v13';
 const DB_VER = 1;
 const STORE_TRIPS = 'trips';
 const STORE_PLACES = 'places';
 const STORE_VISITS = 'visits';
+const STORE_CANDIDATES = 'gps_candidates';
 const STORE_META = 'meta';
 const LEGACY_DB_NAME_V10 = 'wakasagi_trip_map_v10';
 const OLD_DB_NAME = 'wakasa_companion_v2';
@@ -65,6 +66,13 @@ function openDb(){
         st.createIndex('point_visit_id','point_visit_id',{unique:false});
       }
 
+      if(!d.objectStoreNames.contains(STORE_CANDIDATES)){
+        const st=d.createObjectStore(STORE_CANDIDATES,{keyPath:'candidate_id'});
+        st.createIndex('trip_id','trip_id',{unique:false});
+        st.createIndex('enter_ms','enter_ms',{unique:false});
+        st.createIndex('confirmed','confirmed',{unique:false});
+      }
+
       if(!d.objectStoreNames.contains(STORE_META)){
         d.createObjectStore(STORE_META,{keyPath:'key'});
       }
@@ -74,6 +82,7 @@ function openDb(){
       return d.objectStoreNames.contains(STORE_TRIPS) &&
              d.objectStoreNames.contains(STORE_PLACES) &&
              d.objectStoreNames.contains(STORE_VISITS) &&
+             d.objectStoreNames.contains(STORE_CANDIDATES) &&
              d.objectStoreNames.contains(STORE_META);
     }
 
@@ -277,10 +286,11 @@ function metaGet(k){return new Promise(res=>{const r=st(STORE_META).get(k);r.ons
 function metaSet(k,v){return new Promise(res=>{const tx=db.transaction(STORE_META,'readwrite');tx.objectStore(STORE_META).put({key:k,value:v});tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);});}
 function clearDb(){
   return new Promise(res=>{
-    const tx=db.transaction([STORE_TRIPS,STORE_PLACES,STORE_VISITS,STORE_META],'readwrite');
+    const tx=db.transaction([STORE_TRIPS,STORE_PLACES,STORE_VISITS,STORE_CANDIDATES,STORE_META],'readwrite');
     tx.objectStore(STORE_TRIPS).clear();
     tx.objectStore(STORE_PLACES).clear();
     tx.objectStore(STORE_VISITS).clear();
+    tx.objectStore(STORE_CANDIDATES).clear();
     tx.objectStore(STORE_META).clear();
     tx.oncomplete=()=>res(true);
     tx.onerror=()=>res(false);
@@ -411,6 +421,173 @@ function v12_nextVisitOrder(visits,tripId){
   }
   return max+1;
 }
+
+
+
+const V13_CANDIDATE_MOVE_M = 10.0;
+const V13_CANDIDATE_MAX_ACC_M = 30.0;
+const V13_TIME_OVERLAP_MARGIN_MS = 5 * 60 * 1000;
+
+function v13_num(v,def=0){
+  const n=Number(v);
+  return Number.isFinite(n) ? n : def;
+}
+
+function v13_tripIdForMs(ms,lakeName=''){
+  const dkey=v12_dateKeyFromMs(ms || nowMs());
+  const lake=String(lakeName || 'NO_LAKE').trim() || 'NO_LAKE';
+  return 'TRIP_' + dkey.replace(/[^0-9]/g,'') + '_' + lake.replace(/[^\w\u3040-\u30ff\u3400-\u9fff-]+/g,'_');
+}
+
+async function v13_getAllCandidates(){
+  return await getAllFromStore(STORE_CANDIDATES);
+}
+
+async function v13_putCandidate(c){
+  return new Promise(res=>{
+    try{
+      const tx=db.transaction(STORE_CANDIDATES,'readwrite');
+      tx.objectStore(STORE_CANDIDATES).put(c);
+      tx.oncomplete=()=>res(true);
+      tx.onerror=()=>res(false);
+    }catch(e){
+      res(false);
+    }
+  });
+}
+
+function v13_candidateTimeRange(c){
+  const enter=v13_num(c && c.enter_ms,0);
+  const leave=v13_num(c && c.leave_ms,0) || enter;
+  return {start:enter,end:Math.max(enter,leave)};
+}
+
+function v13_payloadTimeRange(p){
+  const start=v13_num(p && (p.start_ms || p.first_recv_ms),0);
+  const end=v13_num(p && (p.updated_ms || p.last_recv_ms),0) || start || Date.now();
+
+  return {
+    start:start || end,
+    end:Math.max(start || end,end)
+  };
+}
+
+function v13_rangesOverlap(a,b,marginMs=V13_TIME_OVERLAP_MARGIN_MS){
+  if(!a || !b) return false;
+  const as=v13_num(a.start,0)-marginMs;
+  const ae=v13_num(a.end,0)+marginMs;
+  const bs=v13_num(b.start,0);
+  const be=v13_num(b.end,0);
+  if(!as || !ae || !bs || !be) return false;
+  return as <= be && bs <= ae;
+}
+
+function v13_hasFishingEvidence(p,summary=null){
+  const s=summary || {};
+
+  const tlog=v13_num(p && p.tlog_count, v13_num(s.tlog_count,0));
+  const firstSeq=v13_num(p && p.first_seq, v13_num(s.first_seq,0));
+  const lastSeq=v13_num(p && p.last_seq, v13_num(s.last_seq,0));
+  const maxDepth=v112_depthNum(p && p.max_depth_m) || v112_depthNum(s && s.max_depth_m);
+  const fishfinder=v112_depthNum(p && (p.fishfinder_depth_m || p.fishfinder_m));
+  const status=String((p && p.depth_status) || (s && s.depth_status) || '').trim();
+  const measured=String((p && p.depth_measured) || (s && s.depth_measured) || '').trim();
+
+  if(maxDepth !== null && maxDepth > 0) return true;
+  if(fishfinder !== null && fishfinder > 0) return true;
+  if(status === 'measured') return true;
+  if(measured === '1' || measured === 'true') return true;
+  if(tlog > 0 && lastSeq > firstSeq) return true;
+
+  return false;
+}
+
+async function v13_saveGpsCandidateFromPosition(pos,opts={}){
+  const a=Number(pos && pos.lat);
+  const b=Number(pos && pos.lng);
+  if(!validLatLng(a,b)) return null;
+
+  const acc=Number(pos && pos.acc || 0);
+  if(acc && acc > V13_CANDIDATE_MAX_ACC_M) return null;
+
+  const candidates=await v13_getAllCandidates();
+  const now=v13_num(pos && pos.t,nowMs()) || nowMs();
+  const tripId=String(opts.trip_id || v13_tripIdForMs(now,opts.lake_name || ''));
+
+  let last=null;
+  for(const c of candidates){
+    if(String(c.trip_id)!==tripId) continue;
+    if(!last || v13_num(c.enter_ms,0)>v13_num(last.enter_ms,0)) last=c;
+  }
+
+  if(last && validLatLng(Number(last.lat),Number(last.lng))){
+    const d=dist(a,b,Number(last.lat),Number(last.lng));
+    if(Number.isFinite(d) && d < V13_CANDIDATE_MOVE_M){
+      const upd={...last,leave_ms:now,accuracy_m:acc || last.accuracy_m || 0,updated_ms:now};
+      await v13_putCandidate(upd);
+      return upd;
+    }
+  }
+
+  const c={
+    candidate_id:genId('C'),
+    trip_id:tripId,
+    lat:a,
+    lng:b,
+    accuracy_m:acc || 0,
+    enter_ms:now,
+    leave_ms:now,
+    source:'phone_gps',
+    confirmed:false,
+    linked_visit_id:'',
+    created_ms:now,
+    updated_ms:now
+  };
+
+  await v13_putCandidate(c);
+  return c;
+}
+
+async function v13_findCandidateForPayload(p){
+  const candidates=await v13_getAllCandidates();
+  const pr=v13_payloadTimeRange(p);
+  const plat=Number(p && (p.gps_lat || p.lat));
+  const plng=Number(p && (p.gps_lng || p.lng));
+  const hasP=validLatLng(plat,plng);
+
+  let best=null;
+  let bestScore=Infinity;
+
+  for(const c of candidates){
+    if(c.confirmed && c.linked_visit_id) continue;
+    if(!v13_rangesOverlap(v13_candidateTimeRange(c),pr)) continue;
+
+    let score=Math.abs(v13_num(c.enter_ms,0)-v13_num(pr.start,0));
+    if(hasP && validLatLng(Number(c.lat),Number(c.lng))){
+      const d=dist(plat,plng,Number(c.lat),Number(c.lng));
+      if(Number.isFinite(d)) score += d*1000;
+    }
+
+    if(score<bestScore){
+      best=c;
+      bestScore=score;
+    }
+  }
+
+  return best;
+}
+
+async function v13_confirmCandidate(candidate,visitId){
+  if(!candidate || !visitId) return false;
+  const now=nowMs();
+  return await v13_putCandidate({
+    ...candidate,
+    confirmed:true,
+    linked_visit_id:String(visitId),
+    updated_ms:now
+  });
+}
+
 
 
 
@@ -681,7 +858,7 @@ function showPopupDateList(groupId,box){const g=(groups||[]).find(x=>String(x.gr
 
 async function renderMap(){ensureMap();if(!groupLayer)return;groupLayer.clearLayers();const trips=await getAllTrips();groups=makeGroups(trips);for(const g of groups){const ic=L.divIcon({className:'',html:`<div class="${markerClass(g)}">${g.count}</div>`,iconSize:[38,38],iconAnchor:[19,19],popupAnchor:[0,-18]});L.marker([g.lat,g.lng],{icon:ic}).addTo(groupLayer).bindPopup(popup(g));}}
 
-function updatePosition(pos,zoomNow=false,doInitialFit=true){currentPos={lat:Number(pos.lat),lng:Number(pos.lng),acc:Number(pos.acc||0),t:Number(pos.t||nowMs())};$('latView').textContent=currentPos.lat.toFixed(7);$('lngView').textContent=currentPos.lng.toFixed(7);$('accView').textContent=currentPos.acc?`±${Math.round(currentPos.acc)}m`:'-';$('timeView').textContent=fmtTime(currentPos.t);$('locStatus').textContent='現在地を確認しました。';setBadge('locBadge','取得済み',currentPos.acc>0&&currentPos.acc<=20?'good':'warn');metaSet('last_pos',currentPos);drawCurrent(zoomNow);refreshAll().then(()=>{if(doInitialFit)fitInitialLakeViewOnce(true);});}
+function updatePosition(pos,zoomNow=false,doInitialFit=true){currentPos={lat:Number(pos.lat),lng:Number(pos.lng),acc:Number(pos.acc||0),t:Number(pos.t||nowMs())};$('latView').textContent=currentPos.lat.toFixed(7);$('lngView').textContent=currentPos.lng.toFixed(7);$('accView').textContent=currentPos.acc?`±${Math.round(currentPos.acc)}m`:'-';$('timeView').textContent=fmtTime(currentPos.t);$('locStatus').textContent='現在地を確認しました。';setBadge('locBadge','取得済み',currentPos.acc>0&&currentPos.acc<=20?'good':'warn');metaSet('last_pos',currentPos);v13_saveGpsCandidateFromPosition(currentPos).catch(()=>{});drawCurrent(zoomNow);refreshAll().then(()=>{if(doInitialFit)fitInitialLakeViewOnce(true);});}
 function locate(manual=false){
   if(!window.isSecureContext){
     $('locStatus').textContent='HTTPSで開いていません。GitHub Pagesのhttps URLから開いてください。';
@@ -1233,6 +1410,7 @@ function v112_makeTripFromLogSync(p){
     pico_sid:sid,
     point_visit_id:pointKey,
     map_point_key:pointKey,
+    point_start_seq:p.point_start_seq === undefined ? '' : p.point_start_seq,
     map_spot_id:String(p.map_spot_id || p.spot_id || ''),
     date_ms:v112_numOrNull(p.start_ms) || v112_numOrNull(p.first_recv_ms) || now,
     lat:Number.isFinite(gpsLat) ? gpsLat : 0,
@@ -1268,9 +1446,9 @@ async function v112_applyLogSyncPayload(p){
     return false;
   }
 
-  const lat = Number(p.gps_lat || p.lat);
-  const lng = Number(p.gps_lng || p.lng);
-  if(!Number.isFinite(lat) || !Number.isFinite(lng)){
+  const lat0 = Number(p.gps_lat || p.lat);
+  const lng0 = Number(p.gps_lng || p.lng);
+  if(!Number.isFinite(lat0) || !Number.isFinite(lng0)){
     v112_setLogSync('logsync 座標なし','bad');
     return false;
   }
@@ -1278,14 +1456,44 @@ async function v112_applyLogSyncPayload(p){
   const now = Date.now();
   const pointKey = String(p.point_visit_id || p.map_point_key || '').trim();
   const summary = v112_makePicoSummary(p);
+  const hasEvidence = v13_hasFishingEvidence(p,summary);
+
+  const candidate = await v13_findCandidateForPayload(p);
+  const useLat = candidate && validLatLng(Number(candidate.lat),Number(candidate.lng)) ? Number(candidate.lat) : lat0;
+  const useLng = candidate && validLatLng(Number(candidate.lat),Number(candidate.lng)) ? Number(candidate.lng) : lng0;
+
+  if(!hasEvidence){
+    const tripId=v13_tripIdForMs(v112_numOrNull(p.start_ms) || v112_numOrNull(p.first_recv_ms) || now,String(p.lake_name || ''));
+    await v13_saveGpsCandidateFromPosition({
+      lat:useLat,
+      lng:useLng,
+      acc:Number(p.gps_acc_m || p.acc || 0),
+      t:v112_numOrNull(p.start_ms) || v112_numOrNull(p.first_recv_ms) || now
+    },{trip_id:tripId,lake_name:String(p.lake_name || '')});
+
+    v112_setLogSync('候補保存','warn');
+
+    if(history && history.replaceState){
+      history.replaceState(null, document.title, location.pathname + location.search);
+    }
+
+    await refreshAll();
+    return true;
+  }
 
   let t = await v112_findTripForLogSync(p);
   if(!t) t = v112_makeTripFromLogSync(p);
+
+  t.lat = useLat;
+  t.lng = useLng;
+  t.accuracy_m = candidate ? Number(candidate.accuracy_m || 0) : Number(p.gps_acc_m || p.acc || t.accuracy_m || 0);
+  t.location_time_ms = candidate ? Number(candidate.enter_ms || now) : Number(p.gps_ms || p.start_ms || now);
 
   t.pico_sid = sid;
   t.point_visit_id = String(t.point_visit_id || pointKey || '');
   t.map_point_key = String(t.map_point_key || pointKey || '');
   t.map_spot_id = String(t.map_spot_id || p.map_spot_id || p.spot_id || '');
+  t.point_start_seq = p.point_start_seq === undefined ? (t.point_start_seq || '') : p.point_start_seq;
 
   if(!t.lake_name && p.lake_name) t.lake_name = String(p.lake_name);
   if(!t.point_name && (p.point_name || p.place_name)) t.point_name = String(p.point_name || p.place_name);
@@ -1296,8 +1504,6 @@ async function v112_applyLogSyncPayload(p){
   if(!t.wind && (p.wind_dir || p.wind)) t.wind = String(p.wind_dir || p.wind);
   if(!t.memo && p.note) t.memo = String(p.note);
 
-  // 水深は現在ポイント内だけで深い方へ更新する。
-  // 0mは登録しない。20m以内の別ポイント・過去履歴の値は比較しない。
   const incomingDepth = v112_depthMaxText(
     p.fishfinder_depth_m,
     p.max_depth_m,
@@ -1310,13 +1516,10 @@ async function v112_applyLogSyncPayload(p){
   );
 
   if(incomingDepth){
-    // この同期で底取り済みの深度が来た場合だけ、深い方へ更新する。
     t.fishfinder_depth_m = mergedDepth;
     t.depth_status = 'measured';
   }else{
-    // この同期で有効な深度が無い場合は、現在表示を未底取り扱いにする。
-    // 既存の fishfinder_depth_m 自体は消さない。次に深度が来れば深い方へ更新できる。
-    t.depth_status = 'not_measured';
+    t.depth_status = String(t.depth_status || 'not_measured');
   }
   t.depth_last_sync_ms = now;
 
@@ -1324,10 +1527,18 @@ async function v112_applyLogSyncPayload(p){
   t.pico_logs = t.pico_logs.filter(x => String(x.point_visit_id || x.map_point_key || '') !== pointKey);
   t.pico_logs.push(summary);
   t.pico_summary = summary;
-
+  t.candidate_id = candidate ? String(candidate.candidate_id || '') : String(t.candidate_id || '');
+  t.confirmed_by = candidate ? 'gps_time_overlap+pico_log_activity' : 'pico_log_activity';
   t.updated_ms = now;
 
   await putTrip(t);
+
+  try{
+    if(candidate){
+      await v13_confirmCandidate(candidate,String(t.visit_id || t.trip_id || ''));
+    }
+  }catch(e){}
+
   selectedTripId = t.trip_id;
 
   if(history && history.replaceState){

@@ -1,12 +1,12 @@
 // Wakasagi Companion service worker
-// Version: 2026-05-20 v12-place-visit-shell-1
+// Version: 2026-05-20 v13-time-candidate-shell-1
 //
 // 目的:
 // - 現在の index.html が読む app_pre_stage1_rollback.js / lake_autofill.js / style.css をキャッシュする。
 // - CACHE_NAME を更新し、古いJSキャッシュを残さない。
 // - fetch 方針は既存の clean-autolink-shell と同じまま維持する。
 
-const CACHE_NAME = 'wakasagi-companion-shell-v20260520-v12-place-visit-1';
+const CACHE_NAME = 'wakasagi-companion-shell-v20260520-v13-time-candidate-1';
 
 const APP_SHELL = [
   './',
