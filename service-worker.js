@@ -1,13 +1,12 @@
 // Wakasagi Companion service worker
-// Version: 2026-05-16 clean-autolink-shell-1
+// Version: 2026-05-20 v12-place-visit-shell-1
 //
 // 目的:
-// - PicoW-Config接続中でも、事前キャッシュ済みのGitHub Pages本体を起動できるようにする。
-// - 現在のindex.htmlが読む app_clean_autolink_idb.js / lake_autofill.js / style.css を確実にキャッシュする。
-// - 地図タイルや外部CDNが読めない環境でも、GPS取得→Pico W /log#maplink の自動連携を成立させる。
-// - fetch方針は既存の考え方を維持し、余計な介入を増やさない。
+// - 現在の index.html が読む app_pre_stage1_rollback.js / lake_autofill.js / style.css をキャッシュする。
+// - CACHE_NAME を更新し、古いJSキャッシュを残さない。
+// - fetch 方針は既存の clean-autolink-shell と同じまま維持する。
 
-const CACHE_NAME = 'wakasagi-companion-shell-v20260516-clean-autolink-1';
+const CACHE_NAME = 'wakasagi-companion-shell-v20260520-v12-place-visit-1';
 
 const APP_SHELL = [
   './',
@@ -20,10 +19,13 @@ const APP_SHELL = [
   // app.js は旧互換用に残す。
   './app.js',
 
-  // 現在のindex.htmlが読む本体JS。
+  // 現在の index.html が読む本体JS。
+  './app_pre_stage1_rollback.js',
+
+  // 旧キャッシュ/旧index互換用。
   './app_clean_autolink_idb.js',
 
-  // 現在のindex.htmlが読む補助JS。
+  // 現在の index.html が読む補助JS。
   './lake_autofill.js',
 
   // Manifest
@@ -37,6 +39,7 @@ async function cacheAppShell(){
   await Promise.all(APP_SHELL.map(async (url)=>{
     try{
       const res = await fetch(url, {cache:'reload'});
+
       if(res && (res.ok || res.type === 'opaque')){
         await cache.put(url, res.clone());
       }
@@ -110,7 +113,7 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // 同一オリジンの app_clean_autolink_idb.js / lake_autofill.js / style.css などは、
+  // 同一オリジンの app_pre_stage1_rollback.js / lake_autofill.js / style.css などは、
   // キャッシュ優先で返し、裏で更新を試みる。
   //
   // これにより、APモードでインターネットに出られない時でも、
@@ -127,6 +130,7 @@ self.addEventListener('fetch', event => {
             cache.put(req, res.clone());
           }catch(e){}
         }
+
         return res;
       }).catch(()=>null);
 
