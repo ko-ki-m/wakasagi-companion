@@ -1,30 +1,60 @@
 /*
   wakasagi-companion / lake_autofill.js
-  Version: 2026-05-21 d1 place-visit fix
+  修正版: 2026-05-12 lake-name repair 版
 
   目的:
-    1) 既存トップ階層 app_pre_stage1_rollback.js は変更しない。
-    2) service-worker.js は変更しない。
-    3) Pico W /log から戻った #logsync 保存時、
-       point_visit_id を地図ピンIDに使わない。
-    4) point_visit_id は Pico Wログ区間IDとして保持する。
-    5) map_point_key はGPS座標から作る物理地点キーにする。
-    6) 同じ point_visit_id の再同期だけ既存trip更新にする。
-    7) 同じ場所でも新しい point_visit_id は別visitとして保存し、
-       app_pre_stage1_rollback.js 側の 10m group 表示で同じピンにまとまる。
-    8) 移動だけのデータは保存しない。tlog_count と seq 差分があるものだけ保存する。
-    9) 既存の湖名自動補完は維持する。
+    1) Pico W /log から戻った #logsync 保存時、lake_name が空なら補完する。
+    2) #logsync の保存先選定で、過去地点(map_spot_id)へ統合して回数が増えない問題を止める。
+    3) GitHub -> Pico W へ渡す maplink payload に、同地点20m以内の過去回数/今日回数を付加する。
+    4) 既に保存済みで lake_name が空の trip_records も、同じChrome内で補修する。
+    5) viewer/lakes の全国湖沼JSONが読めない場合でも、主要ワカサギ湖の内蔵フォールバックで補完する。
+
+  守ること:
+    - app.js 本体は改造しない。
+    - putTrip() 本体は改造しない。
+    - Pico W側、viewer側、既存DB構造は変更しない。
+    - 失敗しても本体連携・保存処理を止めない。
 */
 (function(){
   'use strict';
 
-  const INSTALL_FLAG = '__wakasagiLakeAutofillPlaceVisitFix20260521d1Installed';
-  const WRAP_FLAG = '__wakasagiLakeAutofillPlaceVisitFix20260521d1Wrapped';
+  const INSTALL_FLAG = '__wakasagiLakeAutofillLogsync20260512LakeRepairInstalled';
+  const APPLY_WRAP_FLAG = '__wakasagiLakeAutofillLogsyncWrappedLakeRepair';
+  const MAPLINK_WRAP_FLAG = '__wakasagiMaplinkHistoryCountsWrappedLakeRepair20260512';
+  const FIND_FIX_FLAG = '__wakasagiLogsyncFindTripLakeRepair20260512';
 
   const INDEX_URL = './viewer/lakes/index.json';
   const PREF_BASE_URL = './viewer/lakes/';
   const BBOX_MARGIN_DEG = 0.005;
   const NEAR_LIMIT_M = 500;
+  const SAME_POINT_M = 20;
+  const SAME_AREA_M = 100;
+
+  const DB_NAME = 'wakasagi_trip_map_v10';
+  const STORE_TRIPS = 'trip_records';
+
+  // viewer/lakes が未読込・圏外・Pico W Wi-Fi中で外部JSONを読めない場合の最後の保険。
+  // W09ポリゴン判定を最優先し、それが失敗した場合だけ使う。
+  const BUILTIN_LAKE_FALLBACKS = [
+    {name:'野尻湖', lat:36.8325, lng:138.2096, radius_m:3800},
+    {name:'諏訪湖', lat:36.0474, lng:138.0835, radius_m:5200},
+    {name:'桧原湖', lat:37.6860, lng:140.0600, radius_m:8500},
+    {name:'山中湖', lat:35.4180, lng:138.8790, radius_m:5200},
+    {name:'河口湖', lat:35.5158, lng:138.7550, radius_m:6500},
+    {name:'西湖', lat:35.5008, lng:138.6847, radius_m:3600},
+    {name:'精進湖', lat:35.4934, lng:138.6117, radius_m:2600},
+    {name:'本栖湖', lat:35.4627, lng:138.5838, radius_m:5200},
+    {name:'榛名湖', lat:36.4767, lng:138.8752, radius_m:3000},
+    {name:'木崎湖', lat:36.5562, lng:137.8340, radius_m:3800},
+    {name:'松原湖', lat:36.0530, lng:138.4650, radius_m:1700},
+    {name:'中禅寺湖', lat:36.7407, lng:139.4600, radius_m:9500},
+    {name:'芦ノ湖', lat:35.2078, lng:139.0019, radius_m:8500},
+    {name:'余呉湖', lat:35.5286, lng:136.1902, radius_m:3000},
+    {name:'朱鞠内湖', lat:44.3050, lng:142.1600, radius_m:13000},
+    {name:'網走湖', lat:43.9800, lng:144.1650, radius_m:10000},
+    {name:'阿寒湖', lat:43.4500, lng:144.1000, radius_m:9000},
+    {name:'赤城大沼', lat:36.5453, lng:139.1848, radius_m:2600}
+  ];
 
   if(window[INSTALL_FLAG]) return;
   window[INSTALL_FLAG] = true;
@@ -37,88 +67,14 @@
            lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
   }
 
-  function normText(v){
-    return String(v == null ? '' : v).trim();
+  function pad2(n){
+    return String(n).padStart(2, '0');
   }
 
-  const PLACEHOLDER_WORDS = new Set([
-    '', '-', '--', '0', '0.0',
-    '未登録', '未設定', '未入力', '不明', 'なし',
-    '取得不可', 'na', 'n/a', 'null', 'undefined'
-  ]);
-
-  function isPlaceholder(v){
-    const s = normText(v)
-      .replace(/[　\s]/g, '')
-      .replace(/[－ー―—]/g, '-')
-      .toLowerCase();
-    return PLACEHOLDER_WORDS.has(s);
-  }
-
-  function realText(v){
-    return isPlaceholder(v) ? '' : normText(v);
-  }
-
-  function numOrNull(v){
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  }
-
-  function depthNum(v){
-    const n = Number(v);
-    return (Number.isFinite(n) && n > 0) ? n : null;
-  }
-
-  function maxDepthText(){
-    let best = null;
-    for(const v of arguments){
-      const n = depthNum(v);
-      if(n === null) continue;
-      if(best === null || n > best) best = n;
-    }
-    return best === null ? '' : best.toFixed(3);
-  }
-
-  function payloadVisitId(p){
-    return String((p && (p.point_visit_id || p.visit_id)) || '').trim();
-  }
-
-  function payloadSid(p){
-    return String((p && p.sid) || '').trim();
-  }
-
-  function payloadLat(p){
-    return Number(p && (p.gps_lat ?? p.lat));
-  }
-
-  function payloadLng(p){
-    return Number(p && (p.gps_lng ?? p.lng));
-  }
-
-  function physicalPlaceKey(lat, lng){
-    if(!validLatLng(lat, lng)) return '';
-    const latM = 111111.0;
-    const lngM = 111111.0 * Math.cos(lat * Math.PI / 180);
-    const gy = Math.round((lat * latM) / 10.0);
-    const gx = Math.round((lng * lngM) / 10.0);
-    return 'PLACE_' + gy + '_' + gx;
-  }
-
-  function hasFishingActivity(p){
-    const tlog = Number(p && p.tlog_count);
-    const firstSeq = Number(p && (p.first_seq ?? p.point_start_seq ?? 0));
-    const lastSeq  = Number(p && (p.last_seq  ?? p.point_last_seq  ?? 0));
-
-    if(Number.isFinite(tlog) && tlog > 0 && Number.isFinite(firstSeq) && Number.isFinite(lastSeq) && lastSeq > firstSeq){
-      return true;
-    }
-
-    // 互換保険。seqが欠けていても、複数ログがある場合だけ実釣あり扱い。
-    if(Number.isFinite(tlog) && tlog > 1){
-      return true;
-    }
-
-    return false;
+  function localDateKey(ms){
+    const d = new Date(Number(ms || Date.now()));
+    if(Number.isNaN(d.getTime())) return '';
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
   }
 
   function asArray(data){
@@ -201,9 +157,19 @@
   }
 
   async function loadJson(url){
-    const res = await fetch(url, { cache: 'force-cache' });
-    if(!res.ok) throw new Error(url + ' load failed: ' + res.status);
-    return await res.json();
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => {
+      try{ ctrl.abort(); }catch(e){}
+    }, 2500) : null;
+
+    try{
+      const opt = ctrl ? { cache: 'force-cache', signal: ctrl.signal } : { cache: 'force-cache' };
+      const res = await fetch(url, opt);
+      if(!res.ok) throw new Error(url + ' load failed: ' + res.status);
+      return await res.json();
+    }finally{
+      if(timer) clearTimeout(timer);
+    }
   }
 
   async function loadLakeIndex(){
@@ -294,54 +260,81 @@
     return best;
   }
 
-  async function guessLakeNameFromLatLng(lat, lng){
+  function guessLakeNameBuiltIn(lat, lng){
     if(!validLatLng(lat, lng)) return null;
 
-    const indexRows = await loadLakeIndex();
-    const indexCandidates = indexRows.filter(row => {
-      const f = lakeFile(row);
-      const b = lakeBbox(row);
-      return f && b && inBbox(lng, lat, b, BBOX_MARGIN_DEG);
-    });
-
-    const files = [...new Set(indexCandidates.map(lakeFile).filter(Boolean))];
-    if(!files.length) return null;
-
-    let nearest = null;
-
-    for(const file of files){
-      const lakes = await loadLakePrefFile(file);
-      for(const lake of lakes){
-        const name = lakeName(lake);
-        const geom = lakeGeometry(lake);
-        if(!name || !geom) continue;
-
-        const b = lakeBbox(lake);
-        if(b && !inBbox(lng, lat, b, BBOX_MARGIN_DEG)) continue;
-
-        if(pointInGeometry(lng, lat, geom)){
-          return {
-            lake_name: name,
-            lake_source: 'ksj_w09_polygon',
-            lake_confidence: 1.0
+    let best = null;
+    for(const lake of BUILTIN_LAKE_FALLBACKS){
+      const d = distMeters(lat, lng, lake.lat, lake.lng);
+      if(Number.isFinite(d) && d <= lake.radius_m){
+        if(!best || d < best.distance_m){
+          best = {
+            lake_name: lake.name,
+            lake_source: 'builtin_wakasagi_lake_fallback',
+            lake_confidence: 0.55,
+            distance_m: d
           };
-        }
-
-        const d = geometryDistanceMeters(lat, lng, geom);
-        if(Number.isFinite(d) && d <= NEAR_LIMIT_M){
-          if(!nearest || d < nearest.distance_m){
-            nearest = {
-              lake_name: name,
-              lake_source: 'ksj_w09_near',
-              lake_confidence: 0.7,
-              distance_m: d
-            };
-          }
         }
       }
     }
+    return best;
+  }
 
-    return nearest;
+  async function guessLakeNameFromLatLng(lat, lng){
+    if(!validLatLng(lat, lng)) return null;
+
+    const fallback = guessLakeNameBuiltIn(lat, lng);
+
+    try{
+      const indexRows = await loadLakeIndex();
+      const indexCandidates = indexRows.filter(row => {
+        const f = lakeFile(row);
+        const b = lakeBbox(row);
+        return f && b && inBbox(lng, lat, b, BBOX_MARGIN_DEG);
+      });
+
+      const files = [...new Set(indexCandidates.map(lakeFile).filter(Boolean))];
+      if(!files.length) return fallback;
+
+      let nearest = null;
+
+      for(const file of files){
+        const lakes = await loadLakePrefFile(file);
+        for(const lake of lakes){
+          const name = lakeName(lake);
+          const geom = lakeGeometry(lake);
+          if(!name || !geom) continue;
+
+          const b = lakeBbox(lake);
+          if(b && !inBbox(lng, lat, b, BBOX_MARGIN_DEG)) continue;
+
+          if(pointInGeometry(lng, lat, geom)){
+            return {
+              lake_name: name,
+              lake_source: 'ksj_w09_polygon',
+              lake_confidence: 1.0
+            };
+          }
+
+          const d = geometryDistanceMeters(lat, lng, geom);
+          if(Number.isFinite(d) && d <= NEAR_LIMIT_M){
+            if(!nearest || d < nearest.distance_m){
+              nearest = {
+                lake_name: name,
+                lake_source: 'ksj_w09_near',
+                lake_confidence: 0.7,
+                distance_m: d
+              };
+            }
+          }
+        }
+      }
+
+      return nearest || fallback;
+    }catch(e){
+      console.warn('[wakasagi] lake json guess failed; builtin fallback used if possible:', e);
+      return fallback;
+    }
   }
 
   async function fillLakeNameForTrip(t){
@@ -367,63 +360,132 @@
     return t;
   }
 
-  function normalizeTripFromLogPayload(t, p){
-    if(!t || !p || typeof t !== 'object') return t;
+  function openTripDbDirect(){
+    return new Promise((resolve, reject) => {
+      try{
+        const req = indexedDB.open(DB_NAME);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error('indexedDB open failed'));
+      }catch(e){
+        reject(e);
+      }
+    });
+  }
 
-    const sid = payloadSid(p);
-    const visitId = payloadVisitId(p);
-    const lat = payloadLat(p);
-    const lng = payloadLng(p);
-    const placeKey = physicalPlaceKey(lat, lng);
-    const now = Date.now();
-
-    if(sid) t.pico_sid = sid;
-
-    // point_visit_id はログ境界IDとして必ず保持。
-    if(visitId) t.point_visit_id = visitId;
-
-    // map_point_key は物理地点キーへ置き換える。point_visit_id は入れない。
-    if(placeKey) t.map_point_key = placeKey;
-
-    if(validLatLng(lat, lng)){
-      t.lat = lat;
-      t.lng = lng;
-      t.accuracy_m = numOrNull(p.gps_acc_m || p.acc) || Number(t.accuracy_m || 0) || 0;
-      t.location_time_ms = numOrNull(p.gps_ms) || numOrNull(p.start_ms) || Number(t.location_time_ms || 0) || now;
-    }
-
-    const line = realText(p.line_no || p.line || p.lineNo);
-    if(line) t.line_no = line;
-
-    const sinker = realText(p.sinker_g || p.sinker || p.sinkerG);
-    if(sinker) t.sinker_g = sinker;
-
-    const incomingDepth = maxDepthText(p.fishfinder_depth_m, p.max_depth_m, p.fishfinder_m);
-    const mergedDepth = maxDepthText(t.fishfinder_depth_m, incomingDepth);
-    if(incomingDepth){
-      t.fishfinder_depth_m = mergedDepth;
-      t.depth_status = 'measured';
-    }else if(!t.fishfinder_depth_m){
-      t.depth_status = 'not_measured';
-    }
-
-    if(t.pico_summary && typeof t.pico_summary === 'object'){
-      t.pico_summary.point_visit_id = visitId || String(t.pico_summary.point_visit_id || '');
-      t.pico_summary.map_point_key = placeKey || String(t.pico_summary.map_point_key || '');
-    }
-
-    if(Array.isArray(t.pico_logs)){
-      t.pico_logs = t.pico_logs.map(log=>{
-        if(!log || typeof log !== 'object') return log;
-        if(visitId && String(log.point_visit_id || '') === visitId){
-          log.map_point_key = placeKey || String(log.map_point_key || '');
+  function getAllTripsDirect(db){
+    return new Promise((resolve) => {
+      try{
+        if(!db || !db.objectStoreNames.contains(STORE_TRIPS)){
+          resolve([]);
+          return;
         }
-        return log;
-      });
-    }
+        const tx = db.transaction(STORE_TRIPS, 'readonly');
+        const req = tx.objectStore(STORE_TRIPS).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      }catch(e){
+        resolve([]);
+      }
+    });
+  }
 
-    t.updated_ms = now;
-    return t;
+  function putTripDirect(db, t){
+    return new Promise((resolve) => {
+      try{
+        const tx = db.transaction(STORE_TRIPS, 'readwrite');
+        tx.objectStore(STORE_TRIPS).put(t);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      }catch(e){
+        resolve(false);
+      }
+    });
+  }
+
+  async function repairSavedTripLakeNames(){
+    let db = null;
+
+    try{
+      db = await openTripDbDirect();
+      const rows = await getAllTripsDirect(db);
+      let fixed = 0;
+
+      for(const t of rows){
+        if(!t || typeof t !== 'object') continue;
+
+        const before = String(t.lake_name || t.lakeName || '').trim();
+        if(before) continue;
+
+        const lat = Number(t.lat);
+        const lng = Number(t.lng);
+        if(!validLatLng(lat, lng)) continue;
+
+        await fillLakeNameForTrip(t);
+
+        const after = String(t.lake_name || t.lakeName || '').trim();
+        if(after){
+          t.updated_ms = Date.now();
+          if(await putTripDirect(db, t)) fixed++;
+        }
+      }
+
+      if(fixed){
+        console.info('[wakasagi] repaired lake_name for saved trips:', fixed);
+      }
+    }catch(e){
+      console.warn('[wakasagi] saved trip lake repair skipped:', e);
+    }finally{
+      try{ if(db) db.close(); }catch(e){}
+    }
+  }
+
+  function distMeters(lat1, lng1, lat2, lng2){
+    const R = 6371008.8;
+    const r = v => v * Math.PI / 180;
+    const p1 = r(lat1), p2 = r(lat2);
+    const dp = r(lat2 - lat1), dl = r(lng2 - lng1);
+    const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function tripTimeMs(t){
+    return Number((t && (t.date_ms || t.start_ms || t.created_ms || t.updated_ms)) || 0);
+  }
+
+  function tripLat(t){
+    return Number(t && t.lat);
+  }
+
+  function tripLng(t){
+    return Number(t && t.lng);
+  }
+
+  function samePointRows(trips, baseLat, baseLng, limitM){
+    if(!Array.isArray(trips) || !validLatLng(baseLat, baseLng)) return [];
+    return trips
+      .filter(t => validLatLng(tripLat(t), tripLng(t)))
+      .map(t => ({ t, d: distMeters(baseLat, baseLng, tripLat(t), tripLng(t)) }))
+      .filter(x => x.d <= limitM)
+      .sort((a, b) => tripTimeMs(b.t) - tripTimeMs(a.t));
+  }
+
+  function sidOfPayload(p){
+    return String((p && (p.sid || p.session_id || p.log_sid || p.pico_sid)) || '').trim();
+  }
+
+  function sidOfTrip(t){
+    if(!t || typeof t !== 'object') return '';
+    const s = t.pico_summary || t.pico_log_summary || t.log_summary || null;
+    if(s && (s.sid || s.session_id)) return String(s.sid || s.session_id).trim();
+    return '';
+  }
+
+  function tripHasSid(t, sid){
+    if(!sid || !t) return false;
+    if(sidOfTrip(t) === sid) return true;
+    const logs = Array.isArray(t.pico_logs) ? t.pico_logs : [];
+    return logs.some(x => String((x && (x.sid || x.session_id)) || '').trim() === sid);
   }
 
   function getGlobalFunction(name){
@@ -436,7 +498,7 @@
 
   function setGlobalFunction(name, fn){
     try{ window[name] = fn; }catch(e){}
-    try{ eval(name + ' = fn'); }catch(e){}
+    try{ (0, eval)(name + ' = window["' + name + '"]'); }catch(e){}
   }
 
   function setGlobalPutTrip(fn){
@@ -444,81 +506,63 @@
     try{ putTrip = fn; }catch(e){}
   }
 
-  function visitMatchesTrip(t, visitId){
-    if(!t || !visitId) return false;
+  async function fixedFindTripForLogSync(p){
+    try{
+      const getAll = getGlobalFunction('getAllTrips');
+      if(!getAll) return null;
 
-    if(String(t.point_visit_id || '') === visitId) return true;
+      const trips = await getAll();
+      const sid = sidOfPayload(p);
 
-    if(t.pico_summary && String(t.pico_summary.point_visit_id || '') === visitId) return true;
+      // 最重要:
+      // 同じsidの再同期だけ既存釣行回へ更新する。
+      // map_spot_id は過去地点のIDであり、新規釣行回の保存先ではないため、ここでは絶対に一致検索に使わない。
+      if(sid){
+        const bySid = trips.find(t => tripHasSid(t, sid));
+        if(bySid) return bySid;
+      }
 
-    if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => String(l && l.point_visit_id || '') === visitId)){
-      return true;
+      // 明示的に「今回のtrip_id」が送られてきた場合だけ更新を許可する。
+      // map_spot_id / spot_id は除外する。
+      const explicitTripId = String((p && (p.trip_id || p.current_trip_id || p.log_trip_id)) || '').trim();
+      if(explicitTripId){
+        const byTripId = trips.find(t => String(t.trip_id || '') === explicitTripId);
+        if(byTripId) return byTripId;
+      }
+    }catch(e){
+      console.warn('[wakasagi] fixedFindTripForLogSync failed:', e);
     }
 
-    return false;
+    return null;
   }
 
-  function installWrapper(){
-    const originalApply = getGlobalFunction('v112_applyLogSyncPayload');
+  function installFindTripFix(){
     const originalFind = getGlobalFunction('v112_findTripForLogSync');
+    if(!originalFind) return false;
+    if(originalFind[FIND_FIX_FLAG]) return true;
 
-    if(!originalApply || !originalFind) return false;
-    if(originalApply[WRAP_FLAG]) return true;
+    fixedFindTripForLogSync[FIND_FIX_FLAG] = true;
+    fixedFindTripForLogSync.__original = originalFind;
 
-    const wrappedFind = async function(p){
-      const trips = await getAllTrips();
-      const visitId = payloadVisitId(p);
-      const sid = payloadSid(p);
+    window.v112_findTripForLogSync = fixedFindTripForLogSync;
+    try{ v112_findTripForLogSync = fixedFindTripForLogSync; }catch(e){}
 
-      // 同じログ区間だけ既存更新。
-      // map_point_key は物理地点キーなので、保存先検索には使わない。
-      if(visitId){
-        for(const t of trips){
-          if(visitMatchesTrip(t, visitId)) return t;
-        }
-        return null;
-      }
+    console.info('[wakasagi] logsync find-trip fix installed');
+    return true;
+  }
 
-      // 古いpayload互換。visitIdが無い時だけsid一致を許す。
-      if(sid){
-        for(const t of trips){
-          if(String(t.pico_sid || '') === sid) return t;
-          if(t.pico_summary && String(t.pico_summary.sid || '') === sid) return t;
-          if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => String(l && l.sid || '') === sid)) return t;
-        }
-      }
-
-      return null;
-    };
+  function installLakeNameWrapper(){
+    const originalApply = getGlobalFunction('v112_applyLogSyncPayload');
+    if(!originalApply) return false;
+    if(originalApply[APPLY_WRAP_FLAG]) return true;
 
     const wrappedApply = async function(p){
-      if(!p || p.__error){
-        return await originalApply.call(this, p);
-      }
-
-      const sid = payloadSid(p);
-      const visitId = payloadVisitId(p);
-      const lat = payloadLat(p);
-      const lng = payloadLng(p);
-
-      if(!sid || !visitId || !validLatLng(lat, lng)){
-        return await originalApply.call(this, p);
-      }
-
-      if(!hasFishingActivity(p)){
-        if(typeof window.v112_setLogSync === 'function'){
-          try{ window.v112_setLogSync('実釣ログなし', 'warn'); }catch(e){}
-        }
-        return false;
-      }
-
       const originalPutTrip = getGlobalFunction('putTrip');
       if(!originalPutTrip){
         return await originalApply.call(this, p);
       }
 
       const wrappedPutTrip = async function(t){
-        normalizeTripFromLogPayload(t, p);
         await fillLakeNameForTrip(t);
         return await originalPutTrip.call(this, t);
       };
@@ -526,25 +570,7 @@
       setGlobalPutTrip(wrappedPutTrip);
 
       try{
-        const result = await originalApply.call(this, p);
-
-        // originalApply後に、保存済みtripをもう一度整える。
-        // debug wrapper が putTrip を監視している場合も、最終状態を明確に残す。
-        try{
-          const trips = await getAllTrips();
-          const t = trips.find(x => visitMatchesTrip(x, visitId));
-          if(t){
-            normalizeTripFromLogPayload(t, p);
-            await fillLakeNameForTrip(t);
-            await originalPutTrip.call(this, t);
-            if(typeof selectedTripId !== 'undefined') selectedTripId = t.trip_id;
-            if(typeof refreshAll === 'function') await refreshAll();
-          }
-        }catch(e){
-          console.warn('[wakasagi] final place-visit normalize skipped:', e);
-        }
-
-        return result;
+        return await originalApply.call(this, p);
       }finally{
         const cur = getGlobalFunction('putTrip');
         if(cur === wrappedPutTrip){
@@ -553,33 +579,133 @@
       }
     };
 
-    wrappedFind[WRAP_FLAG] = true;
-    wrappedApply[WRAP_FLAG] = true;
+    wrappedApply[APPLY_WRAP_FLAG] = true;
+    wrappedApply.__original = originalApply;
 
-    setGlobalFunction('v112_findTripForLogSync', wrappedFind);
-    setGlobalFunction('v112_applyLogSyncPayload', wrappedApply);
+    window.v112_applyLogSyncPayload = wrappedApply;
+    try{ v112_applyLogSyncPayload = wrappedApply; }catch(e){}
 
-    console.info('[wakasagi] place-visit logsync wrapper installed 20260521d1');
+    console.info('[wakasagi] lake_autofill logsync wrapper installed');
+    return true;
+  }
+
+  async function addHistoryCountsToMaplinkPayload(payload){
+    try{
+      if(!payload || typeof payload !== 'object') return payload;
+      const baseLat = Number(payload.lat);
+      const baseLng = Number(payload.lng);
+      if(!validLatLng(baseLat, baseLng)) return payload;
+
+      if(!String(payload.lake_name || payload.lakeName || '').trim()){
+        const tmp = { lat: baseLat, lng: baseLng };
+        await fillLakeNameForTrip(tmp);
+        if(tmp.lake_name){
+          payload.lake_name = tmp.lake_name;
+          payload.lake_source = tmp.lake_source || '';
+          payload.lake_confidence = Number(tmp.lake_confidence || 0);
+        }
+      }
+
+      const getAll = getGlobalFunction('getAllTrips');
+      if(!getAll) return payload;
+
+      const trips = await getAll();
+      const same20 = samePointRows(trips, baseLat, baseLng, SAME_POINT_M);
+      const same100 = samePointRows(trips, baseLat, baseLng, SAME_AREA_M);
+      const todayKey = localDateKey(Date.now());
+      const same20Today = same20.filter(x => localDateKey(tripTimeMs(x.t)) === todayKey);
+      const same100Today = same100.filter(x => localDateKey(tripTimeMs(x.t)) === todayKey);
+
+      const dates = same20
+        .map(x => localDateKey(tripTimeMs(x.t)))
+        .filter(Boolean);
+      const uniqueDates = [...new Set(dates)];
+
+      payload.same_point_m = SAME_POINT_M;
+      payload.same_area_m = SAME_AREA_M;
+
+      // Pico側の旧実装がどの名前を見ていても拾えるよう、同じ意味の別名も付ける。
+      payload.same_point_total_count = same20.length;
+      payload.same_point_today_count = same20Today.length;
+      payload.same_area_total_count = same100.length;
+      payload.same_area_today_count = same100Today.length;
+
+      payload.near20_total_count = same20.length;
+      payload.near20_today_count = same20Today.length;
+      payload.near100_total_count = same100.length;
+      payload.near100_today_count = same100Today.length;
+
+      payload.history_count = same20.length;
+      payload.point_history_count = same20.length;
+      payload.today_count = same20Today.length;
+      payload.today_history_count = same20Today.length;
+      payload.same_point_dates = uniqueDates.slice(0, 30);
+      payload.latest_history_date_ms = same20.length ? tripTimeMs(same20[0].t) : 0;
+      payload.history_counts_source = 'github_indexeddb_trip_records';
+      payload.history_counts_ms = Date.now();
+    }catch(e){
+      console.warn('[wakasagi] maplink history counts skipped:', e);
+    }
+
+    return payload;
+  }
+
+  function installMaplinkCountsWrapper(){
+    const originalMake = getGlobalFunction('v11_makeMapLinkPayload');
+    if(!originalMake) return false;
+    if(originalMake[MAPLINK_WRAP_FLAG]) return true;
+
+    const wrappedMake = async function(){
+      const p = await originalMake.call(this);
+      return await addHistoryCountsToMaplinkPayload(p);
+    };
+
+    wrappedMake[MAPLINK_WRAP_FLAG] = true;
+    wrappedMake.__original = originalMake;
+
+    window.v11_makeMapLinkPayload = wrappedMake;
+    try{ v11_makeMapLinkPayload = wrappedMake; }catch(e){}
+
+    console.info('[wakasagi] maplink history-count wrapper installed');
     return true;
   }
 
   let tries = 0;
   function retryInstall(){
     tries++;
-    if(installWrapper()) return;
-    if(tries < 80){
+
+    const a = installFindTripFix();
+    const b = installLakeNameWrapper();
+    const c = installMaplinkCountsWrapper();
+
+    if(a && b && c) return;
+
+    if(tries < 100){
       setTimeout(retryInstall, 100);
     }else{
-      console.warn('[wakasagi] could not find v112 logsync functions');
+      if(!a) console.warn('[wakasagi] could not install logsync find-trip fix');
+      if(!b) console.warn('[wakasagi] could not install lake_autofill wrapper');
+      if(!c) console.warn('[wakasagi] could not install maplink count wrapper');
     }
   }
 
   retryInstall();
 
-  window.__wakasagiPlaceVisitFix20260521d1 = {
-    version: '20260521d1',
-    installWrapper,
-    physicalPlaceKey,
-    hasFishingActivity
+  // 既に保存済みの「湖名なし」データも補修する。
+  // 1回目は初期表示後、2回目は app.js のDB初期化が遅れた場合の保険。
+  setTimeout(repairSavedTripLakeNames, 1200);
+  setTimeout(repairSavedTripLakeNames, 5000);
+
+  window.__wakasagiLakeAutofill = {
+    version: 'production-logsync-count-and-lake-name-fix-20260512',
+    fillLakeNameForTrip,
+    repairSavedTripLakeNames,
+    guessLakeNameFromLatLng,
+    guessLakeNameBuiltIn,
+    fixedFindTripForLogSync,
+    addHistoryCountsToMaplinkPayload,
+    installFindTripFix,
+    installLakeNameWrapper,
+    installMaplinkCountsWrapper
   };
 })();
