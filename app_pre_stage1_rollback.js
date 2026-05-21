@@ -1,12 +1,9 @@
 'use strict';
 
-const DB_NAME = 'wakasagi_trip_map_v14';
+const DB_NAME = 'wakasagi_trip_map_v10';
 const DB_VER = 1;
-const STORE_TRIPS = 'trips';
-const STORE_PLACES = 'places';
-const STORE_VISITS = 'visits';
+const STORE_TRIPS = 'trip_records';
 const STORE_META = 'meta';
-const LEGACY_DB_NAME_V10 = 'wakasagi_trip_map_v10';
 const OLD_DB_NAME = 'wakasa_companion_v2';
 const OLD_STORE_SPOTS = 'fishing_spots';
 const SAME_POINT_M = 20;
@@ -49,33 +46,10 @@ function openDb(){
       if(!d.objectStoreNames.contains(STORE_TRIPS)){
         const st=d.createObjectStore(STORE_TRIPS,{keyPath:'trip_id'});
         st.createIndex('date_ms','date_ms',{unique:false});
-        st.createIndex('lake_name','lake_name',{unique:false});
       }
-
-      if(!d.objectStoreNames.contains(STORE_PLACES)){
-        const st=d.createObjectStore(STORE_PLACES,{keyPath:'place_id'});
-        st.createIndex('lake_name','lake_name',{unique:false});
-      }
-
-      if(!d.objectStoreNames.contains(STORE_VISITS)){
-        const st=d.createObjectStore(STORE_VISITS,{keyPath:'visit_id'});
-        st.createIndex('trip_id','trip_id',{unique:false});
-        st.createIndex('place_id','place_id',{unique:false});
-        st.createIndex('date_ms','date_ms',{unique:false});
-        st.createIndex('point_visit_id','point_visit_id',{unique:false});
-        st.createIndex('visit_key','visit_key',{unique:false});
-      }
-
       if(!d.objectStoreNames.contains(STORE_META)){
         d.createObjectStore(STORE_META,{keyPath:'key'});
       }
-    }
-
-    function hasStores(d){
-      return d.objectStoreNames.contains(STORE_TRIPS) &&
-             d.objectStoreNames.contains(STORE_PLACES) &&
-             d.objectStoreNames.contains(STORE_VISITS) &&
-             d.objectStoreNames.contains(STORE_META);
     }
 
     function openOnce(){
@@ -87,8 +61,10 @@ function openDb(){
 
       req.onsuccess=()=>{
         const d=req.result;
+        const ok = d.objectStoreNames.contains(STORE_TRIPS) &&
+                   d.objectStoreNames.contains(STORE_META);
 
-        if(hasStores(d)){
+        if(ok){
           resolve(d);
           return;
         }
@@ -97,7 +73,7 @@ function openDb(){
         // 正常DBではここへ入らない。
         if(repaired){
           try{ d.close(); }catch(e){}
-          reject(new Error('IndexedDB v12 store repair failed'));
+          reject(new Error('IndexedDB store repair failed'));
           return;
         }
 
@@ -117,182 +93,12 @@ function openDb(){
   });
 }
 function st(name,mode='readonly'){return db.transaction(name,mode).objectStore(name);}
-async function getAllTrips(){
-  const visits=await getAllFromStore(STORE_VISITS);
-  const places=await getAllFromStore(STORE_PLACES);
-  const trips=await getAllFromStore(STORE_TRIPS);
-
-  const placeMap=new Map(places.map(p=>[String(p.place_id),p]));
-  const tripMap=new Map(trips.map(t=>[String(t.trip_id),t]));
-
-  return visits
-    .map(v=>v12_visitToTrip(v,placeMap.get(String(v.place_id)),tripMap.get(String(v.trip_id))))
-    .filter(x=>validLatLng(lat(x),lng(x)));
-}
-async function putTrip(t){
-  try{
-    const now=nowMs();
-    const a=Number(t && t.lat);
-    const b=Number(t && t.lng);
-
-    if(!validLatLng(a,b)) return false;
-
-    const places=await getAllFromStore(STORE_PLACES);
-    const visits=await getAllFromStore(STORE_VISITS);
-    const trips=await getAllFromStore(STORE_TRIPS);
-
-    const pointKey=String(t.point_visit_id || t.map_point_key || '').trim();
-    const visitKey=String(t.visit_key || v14_visitKeyFromPayload(t) || '').trim();
-
-    let appTripId=String(t.app_trip_id || '').trim();
-    if(!appTripId){
-      const existingVisitById = visits.find(v=>String(v.visit_id)===String(t.visit_id || t.trip_id || ''));
-      const existingVisitByKey = visitKey ? visits.find(v=>String(v.visit_key || '')===visitKey) : null;
-      const existingVisitByPoint = (!visitKey && pointKey) ? visits.find(v=>String(v.point_visit_id || v.map_point_key || '')===pointKey) : null;
-      const existingVisit = existingVisitById || existingVisitByKey || existingVisitByPoint || null;
-      appTripId = existingVisit ? String(existingVisit.trip_id) : v12_tripIdForVisit(t);
-    }
-
-    let trip=trips.find(x=>String(x.trip_id)===appTripId) || null;
-    const tripDateMs=Number(t.date_ms || t.start_ms || t.created_ms || now);
-
-    if(!trip){
-      trip={
-        trip_id:appTripId,
-        date_key:v12_dateKeyFromMs(tripDateMs),
-        date_ms:tripDateMs,
-        lake_name:String(t.lake_name || ''),
-        created_ms:now,
-        updated_ms:now
-      };
-    }else{
-      trip={...trip};
-      if(!trip.lake_name && t.lake_name) trip.lake_name=String(t.lake_name);
-      trip.updated_ms=now;
-    }
-
-    let place=v12_findPlace(places,{...t,lat:a,lng:b}) || null;
-    if(!place){
-      place={
-        place_id:String(t.place_id || genId('PL')),
-        lake_name:String(t.lake_name || trip.lake_name || ''),
-        point_name:String(t.point_name || ''),
-        lat:a,
-        lng:b,
-        accuracy_m:Number(t.accuracy_m || t.gps_acc_m || t.acc || 0),
-        created_ms:now,
-        updated_ms:now
-      };
-    }else{
-      place={...place};
-      if(!place.lake_name && (t.lake_name || trip.lake_name)) place.lake_name=String(t.lake_name || trip.lake_name || '');
-      if(!place.point_name && t.point_name) place.point_name=String(t.point_name);
-      place.updated_ms=now;
-    }
-
-    let visitId=String(t.visit_id || '').trim();
-    if(!visitId && t.trip_id && String(t.trip_id).startsWith('V')) visitId=String(t.trip_id);
-
-    let visit=null;
-    if(visitId) visit=visits.find(v=>String(v.visit_id)===visitId) || null;
-    if(!visit && visitKey){
-      visit=visits.find(v=>String(v.visit_key || '')===visitKey) || null;
-    }
-    if(!visit && !visitKey && pointKey){
-      visit=visits.find(v=>String(v.point_visit_id || v.map_point_key || '')===pointKey) || null;
-    }
-    if(!visit && t.trip_id){
-      visit=visits.find(v=>String(v.visit_id)===String(t.trip_id)) || null;
-    }
-
-    const isNew=!visit;
-    if(!visit){
-      visitId=visitId || String(t.trip_id || genId('V'));
-      visit={
-        visit_id:visitId,
-        trip_id:appTripId,
-        place_id:place.place_id,
-        visit_order:v12_nextVisitOrder(visits,appTripId),
-        created_ms:now
-      };
-    }else{
-      visit={...visit};
-      visitId=visit.visit_id;
-    }
-
-    const order=Number(visit.visit_order || v12_nextVisitOrder(visits,appTripId));
-    const dateMs=Number(t.date_ms || t.start_ms || visit.start_ms || tripDateMs || now);
-
-    visit={
-      ...visit,
-      visit_id:visitId,
-      visit_key:visitKey || String(visit.visit_key || ''),
-      trip_id:appTripId,
-      place_id:place.place_id,
-      visit_order:order,
-      point_label:'P'+order,
-      date_ms:dateMs,
-      start_ms:Number(t.start_ms || dateMs),
-      lat:a,
-      lng:b,
-      accuracy_m:Number(t.accuracy_m || t.gps_acc_m || t.acc || visit.accuracy_m || 0),
-      location_time_ms:Number(t.location_time_ms || t.gps_ms || dateMs),
-      lake_name:String(t.lake_name || place.lake_name || trip.lake_name || ''),
-      point_name:String(t.point_name || place.point_name || ('P'+order)),
-      line_no:String(t.line_no || ''),
-      sinker_g:String(t.sinker_g || ''),
-      fishfinder_depth_m:t.fishfinder_depth_m===undefined ? '' : String(t.fishfinder_depth_m || ''),
-      depth_status:String(t.depth_status || ''),
-      depth_last_sync_ms:t.depth_last_sync_ms || '',
-      water_temp_c:String(t.water_temp_c || ''),
-      weather:String(t.weather || ''),
-      wind:String(t.wind || ''),
-      memo:String(t.memo || ''),
-      pico_sid:String(t.pico_sid || ''),
-      point_visit_id:String(t.point_visit_id || ''),
-      map_point_key:String(t.map_point_key || t.point_visit_id || ''),
-      map_spot_id:String(t.map_spot_id || ''),
-      point_start_seq:t.point_start_seq===undefined ? '' : t.point_start_seq,
-      pico_logs:Array.isArray(t.pico_logs) ? t.pico_logs : (Array.isArray(visit.pico_logs)?visit.pico_logs:[]),
-      pico_summary:t.pico_summary || visit.pico_summary || null,
-      migrated_from:t.migrated_from || visit.migrated_from || '',
-      updated_ms:now
-    };
-
-    const tx=db.transaction([STORE_TRIPS,STORE_PLACES,STORE_VISITS],'readwrite');
-    tx.objectStore(STORE_TRIPS).put(trip);
-    tx.objectStore(STORE_PLACES).put(place);
-    tx.objectStore(STORE_VISITS).put(visit);
-
-    return await new Promise(res=>{
-      tx.oncomplete=()=>res(true);
-      tx.onerror=()=>res(false);
-    });
-  }catch(e){
-    return false;
-  }
-}
-function delTrip(id){
-  return new Promise(res=>{
-    const tx=db.transaction(STORE_VISITS,'readwrite');
-    tx.objectStore(STORE_VISITS).delete(id);
-    tx.oncomplete=()=>res(true);
-    tx.onerror=()=>res(false);
-  });
-}
+function getAllTrips(){return new Promise(res=>{const r=st(STORE_TRIPS).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([]);});}
+function putTrip(t){return new Promise(res=>{const tx=db.transaction(STORE_TRIPS,'readwrite');tx.objectStore(STORE_TRIPS).put(t);tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);});}
+function delTrip(id){return new Promise(res=>{const tx=db.transaction(STORE_TRIPS,'readwrite');tx.objectStore(STORE_TRIPS).delete(id);tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);});}
 function metaGet(k){return new Promise(res=>{const r=st(STORE_META).get(k);r.onsuccess=()=>res(r.result?r.result.value:null);r.onerror=()=>res(null);});}
 function metaSet(k,v){return new Promise(res=>{const tx=db.transaction(STORE_META,'readwrite');tx.objectStore(STORE_META).put({key:k,value:v});tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);});}
-function clearDb(){
-  return new Promise(res=>{
-    const tx=db.transaction([STORE_TRIPS,STORE_PLACES,STORE_VISITS,STORE_META],'readwrite');
-    tx.objectStore(STORE_TRIPS).clear();
-    tx.objectStore(STORE_PLACES).clear();
-    tx.objectStore(STORE_VISITS).clear();
-    tx.objectStore(STORE_META).clear();
-    tx.oncomplete=()=>res(true);
-    tx.onerror=()=>res(false);
-  });
-}
+function clearDb(){return new Promise(res=>{const tx=db.transaction([STORE_TRIPS,STORE_META],'readwrite');tx.objectStore(STORE_TRIPS).clear();tx.objectStore(STORE_META).clear();tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);});}
 
 function deleteIndexedDbByName(name){
   return new Promise(resolve=>{
@@ -315,147 +121,14 @@ function deleteIndexedDbByName(name){
 async function clearAllWakasagiDbs(){
   const results=[];
   results.push(await deleteIndexedDbByName(DB_NAME));
-  results.push(await deleteIndexedDbByName(LEGACY_DB_NAME_V10));
   results.push(await deleteIndexedDbByName(OLD_DB_NAME));
   return results;
 }
 
 
-function getAllFromStore(name){
-  return new Promise(res=>{
-    try{
-      const r=st(name).getAll();
-      r.onsuccess=()=>res(r.result||[]);
-      r.onerror=()=>res([]);
-    }catch(e){
-      res([]);
-    }
-  });
-}
-
-function v12_dateKeyFromMs(ms){
-  return tripDateKeyForPopup({date_ms:Number(ms||nowMs())});
-}
-
-function v12_lakeKey(v){
-  return String(v && v.lake_name ? v.lake_name : '').trim();
-}
-
-function v12_tripIdForVisit(t){
-  const dkey=v12_dateKeyFromMs(t && (t.date_ms || t.start_ms || t.created_ms || nowMs()));
-  const lake=v12_lakeKey(t) || 'NO_LAKE';
-  return 'TRIP_' + dkey.replace(/[^0-9]/g,'') + '_' + lake.replace(/[^\w\u3040-\u30ff\u3400-\u9fff-]+/g,'_');
-}
-
-function v12_sameLakeForPlace(t,p){
-  const a=String(t && t.lake_name ? t.lake_name : '').trim();
-  const b=String(p && p.lake_name ? p.lake_name : '').trim();
-
-  if(a && b) return a===b;
-  return true;
-}
-
-function v12_findPlace(places,t){
-  const a=Number(t && t.lat);
-  const b=Number(t && t.lng);
-
-  if(!validLatLng(a,b)) return null;
-
-  if(t && t.place_id){
-    const hit=places.find(p=>String(p.place_id)===String(t.place_id));
-    if(hit) return hit;
-  }
-
-  let best=null;
-  let bd=Infinity;
-  for(const p of places){
-    if(!v12_sameLakeForPlace(t,p)) continue;
-    const pa=Number(p.lat);
-    const pb=Number(p.lng);
-    if(!validLatLng(pa,pb)) continue;
-
-    const d=dist(a,b,pa,pb);
-    if(d<10 && d<bd){
-      best=p;
-      bd=d;
-    }
-  }
-
-  return best;
-}
-
-function v12_visitToTrip(v,place,trip){
-  const visitOrder=Number(v.visit_order||0);
-  const label=v.point_label || (visitOrder>0 ? ('P'+visitOrder) : '');
-
-  return {
-    ...v,
-    trip_id:v.visit_id,
-    visit_id:v.visit_id,
-    app_trip_id:v.trip_id,
-    place_id:v.place_id,
-    visit_order:visitOrder,
-    point_label:label,
-    date_ms:Number(v.date_ms || v.start_ms || 0),
-    start_ms:Number(v.start_ms || v.date_ms || 0),
-    lat:Number(v.lat!==undefined && v.lat!==null && v.lat!=='' ? v.lat : (place?place.lat:0)),
-    lng:Number(v.lng!==undefined && v.lng!==null && v.lng!=='' ? v.lng : (place?place.lng:0)),
-    place_lat:place?Number(place.lat):'',
-    place_lng:place?Number(place.lng):'',
-    lake_name:String(v.lake_name || (place&&place.lake_name) || (trip&&trip.lake_name) || ''),
-    point_name:String(v.point_name || (place&&place.point_name) || label || ''),
-    created_ms:Number(v.created_ms || v.start_ms || v.date_ms || nowMs()),
-    updated_ms:Number(v.updated_ms || v.start_ms || v.date_ms || nowMs())
-  };
-}
-
-function v12_nextVisitOrder(visits,tripId){
-  let max=0;
-  for(const v of visits){
-    if(String(v.trip_id)!==String(tripId)) continue;
-    const n=Number(v.visit_order||0);
-    if(Number.isFinite(n) && n>max) max=n;
-  }
-  return max+1;
-}
-
-
-function v14_normKeyPart(v){
-  return String(v===undefined || v===null ? '' : v).trim();
-}
-
-function v14_visitKeyFromPayload(p){
-  const sid=v14_normKeyPart(p && (p.sid || p.pico_sid));
-  const pointKey=v14_normKeyPart(p && (p.point_visit_id || p.map_point_key));
-  const startSeq=v14_normKeyPart(p && p.point_start_seq);
-  const firstSeq=v14_normKeyPart(p && p.first_seq);
-  const startMs=v14_normKeyPart(p && (p.start_ms || p.first_recv_ms || p.date_ms));
-
-  if(sid && startSeq) return 'SID:'+sid+'|SEQ:'+startSeq;
-  if(sid && pointKey && firstSeq) return 'SID:'+sid+'|PV:'+pointKey+'|FIRST:'+firstSeq;
-  if(sid && pointKey && startMs) return 'SID:'+sid+'|PV:'+pointKey+'|MS:'+startMs;
-  if(pointKey && startSeq) return 'PV:'+pointKey+'|SEQ:'+startSeq;
-  if(pointKey) return 'PV:'+pointKey;
-  if(sid && firstSeq) return 'SID:'+sid+'|FIRST:'+firstSeq;
-  return '';
-}
-
-function v14_sameVisitByKey(v,visitKey){
-  return !!visitKey && String(v && v.visit_key || '') === String(visitKey);
-}
-
-
-
-
-
 function normalizeOld(s){const a=Number(s.lat),b=Number(s.lng); if(!validLatLng(a,b))return null;return{trip_id:s.trip_id||s.spot_id||genId('T'),migrated_from:s.spot_id||'',date_ms:Number(s.start_ms||s.created_ms||nowMs()),lat:a,lng:b,accuracy_m:Number(s.accuracy_m||0),location_time_ms:Number(s.location_time_ms||s.start_ms||nowMs()),lake_name:s.lake_name||'',point_name:s.point_name||'',line_no:s.line_no||'',sinker_g:s.sinker_g||'',fishfinder_depth_m:s.fishfinder_depth_m||s.fishfinder_m||'',water_temp_c:s.water_temp_c||'',weather:s.weather||'',wind:s.wind||'',memo:s.memo||'',created_ms:Number(s.created_ms||s.start_ms||nowMs()),updated_ms:Number(s.updated_ms||s.start_ms||nowMs())};}
 function openOld(){return new Promise(res=>{const r=indexedDB.open(OLD_DB_NAME);r.onsuccess=()=>res(r.result);r.onerror=()=>res(null);r.onblocked=()=>res(null);});}
-async function migrateOld(force=false){
-  // v12では place / visit / point_visit_id を分離するため、旧DBの自動移行は行わない。
-  // テストデータを持ち越さず、クリーンDBから開始する。
-  await metaSet('old_migrated',true);
-  return 0;
-}
+async function migrateOld(force=false){if(!force && await metaGet('old_migrated'))return 0;let old=await openOld();if(!old||!old.objectStoreNames.contains(OLD_STORE_SPOTS)){await metaSet('old_migrated',true);return 0;}const rows=await new Promise(res=>{const r=old.transaction(OLD_STORE_SPOTS,'readonly').objectStore(OLD_STORE_SPOTS).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([]);});let c=0;const cur=await getAllTrips();const exist=new Set(cur.map(x=>String(x.migrated_from||x.trip_id)));for(const row of rows){const t=normalizeOld(row);if(!t)continue;if(!force&&exist.has(String(t.migrated_from||t.trip_id)))continue;await putTrip(t);c++;}await metaSet('old_migrated',true);return c;}
 
 function ensureMap(){if(map)return true;if(!window.L){$('mapStatus').textContent='地図ライブラリ未読込（オフラインGPS連携は可）';return false;}map=L.map('map',{zoomControl:true}).setView(DEFAULT_CENTER,5);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},100);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},600);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);groupLayer=L.layerGroup().addTo(map);return true;}
 function drawCurrent(zoomNow=false){if(!currentPos||!ensureMap())return;const a=Number(currentPos.lat),b=Number(currentPos.lng),acc=Number(currentPos.acc||0);[currentMarker,accCircle,cur20,cur100].forEach(x=>{if(x)x.remove();});currentMarker=L.marker([a,b]).addTo(map).bindPopup('現在地');if(acc>0)accCircle=L.circle([a,b],{radius:acc}).addTo(map);cur20=L.circle([a,b],{radius:SAME_POINT_M,weight:2,fillOpacity:.04}).addTo(map);cur100=L.circle([a,b],{radius:SAME_AREA_M,weight:2,fillOpacity:.015}).addTo(map);if(zoomNow)map.setView([a,b],19);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},50);$('btnFitNear').disabled=false;$('btnSaveScroll').disabled=false;$('btnSaveTrip').disabled=false;}
@@ -492,9 +165,7 @@ function tripTimeLabelForPopup(t){
   if(!n) return '時刻不明';
   const d=new Date(n);
   if(Number.isNaN(d.getTime())) return '時刻不明';
-  const time=`${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  const label=String(t && t.point_label ? t.point_label : '').trim();
-  return label ? `${label} ${time}` : time;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function tripDepthLabelForTimeList(t){
@@ -821,20 +492,7 @@ function clearForm(){editingTripId=null;$('tripDate').value=toLocal(nowMs());['l
 async function saveTrip(){if(!currentPos){alert('現在地がありません。');return;}const f=readForm(),now=nowMs();const trips=await getAllTrips();const near=trips.filter(t=>dBase(t,currentPos.lat,currentPos.lng)!==null&&dBase(t,currentPos.lat,currentPos.lng)<=SAME_POINT_M);if(near.length>0&&!confirm(`20m以内に過去履歴が${near.length}件あります。この場所の新しい釣行回として保存しますか？`))return;const t={trip_id:genId('T'),...f,lat:Number(currentPos.lat),lng:Number(currentPos.lng),accuracy_m:Number(currentPos.acc||0),location_time_ms:Number(currentPos.t||now),created_ms:now,updated_ms:now};await putTrip(t);selectedTripId=t.trip_id;setBadge('saveBadge','保存済み','good');await refreshAll();await selectTrip(t.trip_id);}
 async function updateTrip(){if(!editingTripId){alert('上書き対象がありません。');return;}const trips=await getAllTrips();const old=trips.find(x=>x.trip_id===editingTripId);if(!old)return;const t={...old,...readForm(),updated_ms:nowMs()};await putTrip(t);editingTripId=null;$('btnUpdateTrip').disabled=true;setBadge('saveBadge','上書き済み','good');await refreshAll();await selectTrip(t.trip_id);}
 
-function detailHtml(t,base=null){
-  let dd='-';
-  if(base){
-    const d=dBase(t,base.lat,base.lng);
-    if(d!==null) dd=Math.round(d)+'m';
-  }else if(currentPos){
-    const d=dCurrent(t);
-    if(d!==null) dd='現在地から '+Math.round(d)+'m';
-  }
-
-  const visitLabel=String(t.point_label || (Number(t.visit_order||0)>0 ? ('P'+Number(t.visit_order||0)) : '') || '-');
-
-  return `<div class="kv"><b>訪問</b><span>${esc(visitLabel)}</span><b>日時</b><span>${esc(fmtTime(t.date_ms))}</span><b>距離</b><span>${esc(dd)}</span><b>湖名</b><span>${esc(t.lake_name||'-')}</span><b>ポイント名</b><span>${esc(t.point_name||'-')}</span><b>座標</b><span>${Number(t.lat).toFixed(7)}, ${Number(t.lng).toFixed(7)}</span><b>ライン</b><span>${esc(t.line_no||'-')}</span><b>シンカー</b><span>${esc(t.sinker_g||'-')}g</span><b>魚探水深</b><span>${esc(tripDepthText(t))}</span><b>水温</b><span>${esc(t.water_temp_c||'-')}℃</span><b>天気</b><span>${esc(t.weather||'-')}</span><b>風</b><span>${esc(t.wind||'-')}</span><b>メモ</b><span>${esc(t.memo||'-')}</span></div>`;
-}
+function detailHtml(t,base=null){let dd='-';if(base){const d=dBase(t,base.lat,base.lng);if(d!==null)dd=Math.round(d)+'m';}else if(currentPos){const d=dCurrent(t);if(d!==null)dd='現在地から '+Math.round(d)+'m';}return`<div class="kv"><b>日時</b><span>${esc(fmtTime(t.date_ms))}</span><b>距離</b><span>${esc(dd)}</span><b>湖名</b><span>${esc(t.lake_name||'-')}</span><b>ポイント名</b><span>${esc(t.point_name||'-')}</span><b>座標</b><span>${Number(t.lat).toFixed(7)}, ${Number(t.lng).toFixed(7)}</span><b>ライン</b><span>${esc(t.line_no||'-')}</span><b>シンカー</b><span>${esc(t.sinker_g||'-')}g</span><b>魚探水深</b><span>${esc(tripDepthText(t))}</span><b>水温</b><span>${esc(t.water_temp_c||'-')}℃</span><b>天気</b><span>${esc(t.weather||'-')}</span><b>風</b><span>${esc(t.wind||'-')}</span><b>メモ</b><span>${esc(t.memo||'-')}</span></div>`;}
 function itemHtml(t,label,base,sel=false){const d=base?dBase(t,base.lat,base.lng):dCurrent(t);const cls=d!==null&&d<=SAME_POINT_M?' near20':(d!==null&&d<=SAME_AREA_M?' near100':'');return`<div class="item${sel?' selected':''}${cls}"><div class="top"><span>${esc(title(t))}</span><span>${esc(label)} ${d!==null?Math.round(d)+'m':''}</span></div><div class="body">${esc(fmtTime(tms(t)))}<br>${sub(t)}<br>${esc(t.memo||'')}</div><button data-trip-id="${esc(t.trip_id)}">この釣行回を表示</button></div>`;}
 async function selectGroup(id){if(groups.length===0)groups=makeGroups(await getAllTrips());const g=groups.find(x=>x.group_id===id);if(!g)return;selectedGroupId=id;selectedTripId=g.latest.trip_id;await renderMap();renderPointHistory(g,g.latest.trip_id);showTripDetail(g.latest,{lat:g.lat,lng:g.lng});drawSelected(g.lat,g.lng);map.setView([g.lat,g.lng],18);}
 async function selectTrip(id){const trips=await getAllTrips();const t=trips.find(x=>x.trip_id===id);if(!t)return;groups=makeGroups(trips);const g=groups.find(gr=>gr.trips.some(x=>x.trip_id===id))||{group_id:'single_'+id,lat:lat(t),lng:lng(t),trips:[t],latest:t,count:1};selectedGroupId=g.group_id;selectedTripId=id;await renderMap();renderPointHistory(g,id);showTripDetail(t,{lat:g.lat,lng:g.lng});drawSelected(g.lat,g.lng);map.setView([lat(t),lng(t)],18);}
@@ -1225,23 +883,10 @@ async function v112_findTripForLogSync(p){
   const trips = await getAllTrips();
   const sid = String(p && p.sid ? p.sid : '').trim();
   const pointKey = String((p && (p.point_visit_id || p.map_point_key)) || '').trim();
-  const visitKey = v14_visitKeyFromPayload(p);
 
-  // v14:
-  // visitの同一判定は point_visit_id 単体ではなく、
-  // sid + point_start_seq を最優先にする。
-  // これにより、同じ point_visit_id が返ってきても、
-  // 本体ログ境界(point_start_seq)が違えば別visitとして保存できる。
-  if(visitKey){
-    for(const t of trips){
-      if(String(t.visit_key || '') === visitKey) return t;
-    }
-  }
-
-  // 旧互換:
-  // point_start_seq等が無い古いpayloadだけ、pointKey一致を同一visit扱いする。
-  // v14通常payloadでは visitKey が入るため、ここで別visitを潰さない。
-  if(!visitKey && pointKey){
+  // 現在ポイント単位で更新する。
+  // 20m以内一致、map_spot_id一致、sidだけ一致では過去ポイントへ統合しない。
+  if(pointKey){
     for(const t of trips){
       if(String(t.point_visit_id || '') === pointKey) return t;
       if(String(t.map_point_key || '') === pointKey) return t;
@@ -1250,8 +895,8 @@ async function v112_findTripForLogSync(p){
     }
   }
 
-  // 旧互換: pointKeyもvisitKeyも無いpayloadだけ、sid完全一致を許す。
-  if(!visitKey && !pointKey && sid){
+  // 旧互換: pointKeyが無いpayloadだけ、sid完全一致を許す。
+  if(!pointKey && sid){
     for(const t of trips){
       if(String(t.pico_sid || '') === sid) return t;
       if(t.pico_summary && String(t.pico_summary.sid || '') === sid) return t;
@@ -1277,10 +922,8 @@ function v112_makeTripFromLogSync(p){
   return {
     trip_id:genId('T'),
     pico_sid:sid,
-    visit_key:v14_visitKeyFromPayload(p),
     point_visit_id:pointKey,
     map_point_key:pointKey,
-    point_start_seq:p.point_start_seq === undefined ? '' : p.point_start_seq,
     map_spot_id:String(p.map_spot_id || p.spot_id || ''),
     date_ms:v112_numOrNull(p.start_ms) || v112_numOrNull(p.first_recv_ms) || now,
     lat:Number.isFinite(gpsLat) ? gpsLat : 0,
@@ -1330,11 +973,9 @@ async function v112_applyLogSyncPayload(p){
   let t = await v112_findTripForLogSync(p);
   if(!t) t = v112_makeTripFromLogSync(p);
 
-  t.visit_key = v14_visitKeyFromPayload(p) || String(t.visit_key || '');
   t.pico_sid = sid;
   t.point_visit_id = String(t.point_visit_id || pointKey || '');
   t.map_point_key = String(t.map_point_key || pointKey || '');
-  t.point_start_seq = p.point_start_seq === undefined ? (t.point_start_seq || '') : p.point_start_seq;
   t.map_spot_id = String(t.map_spot_id || p.map_spot_id || p.spot_id || '');
 
   if(!t.lake_name && p.lake_name) t.lake_name = String(p.lake_name);
