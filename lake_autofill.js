@@ -33,6 +33,16 @@
   const DB_NAME = 'wakasagi_trip_map_v10';
   const STORE_TRIPS = 'trip_records';
 
+  const AUTO_INHERIT_POINT_M = 20;
+  const AUTO_INHERIT_AREA_M = 100;
+  const AUTO_WEATHER_TIMEOUT_MS = 3500;
+  const AUTO_REPAIR_MAX_WEATHER_FETCHES = 8;
+  const weatherCache = new Map();
+
+  const AUTO_FIELD_UNREGISTERED = '未登録';
+  const AUTO_FIELD_UNAVAILABLE = '取得不可';
+  const START_DEPTH_LOOKUP_LIMIT_MS = 180000;
+
   // viewer/lakes が未読込・圏外・Pico W Wi-Fi中で外部JSONを読めない場合の最後の保険。
   // W09ポリゴン判定を最優先し、それが失敗した場合だけ使う。
   const BUILTIN_LAKE_FALLBACKS = [
@@ -360,6 +370,180 @@
     return t;
   }
 
+
+  function v20260513_isBadLineSinkerValue(v){
+    const s = String(v == null ? '' : v).trim();
+    const n = s
+      .replace(/[　\s]/g, '')
+      .replace(/[－ー―—]/g, '-')
+      .toLowerCase();
+
+    return n === '未登録' ||
+           n === '未設定' ||
+           n === '未入力' ||
+           n === '不明' ||
+           n === 'なし' ||
+           n === '取得不可' ||
+           n === '-' ||
+           n === '--' ||
+           n === '0' ||
+           n === '0.0' ||
+           n === 'na' ||
+           n === 'n/a' ||
+           n === 'null' ||
+           n === 'undefined';
+  }
+
+
+  function v20260513_cleanExactLine(v){
+    const s = String(v == null ? '' : v).trim();
+    if(!s) return '';
+    if(v20260513_isBadLineSinkerValue(s)) return '';
+    return s;
+  }
+
+  function v20260513_cleanExactSinker(v){
+    const s = String(v == null ? '' : v).trim();
+    if(!s) return '';
+    if(v20260513_isBadLineSinkerValue(s)) return '';
+    return s;
+  }
+
+  function v20260513_exactLineFrom(obj){
+    if(!obj || typeof obj !== 'object') return '';
+
+    const direct = v20260513_cleanExactLine(obj.line_no);
+    if(direct) return direct;
+
+    if(obj.pico_summary && typeof obj.pico_summary === 'object'){
+      const v = v20260513_cleanExactLine(obj.pico_summary.line_no);
+      if(v) return v;
+    }
+
+    if(Array.isArray(obj.pico_logs)){
+      for(const row of obj.pico_logs){
+        if(row && typeof row === 'object'){
+          const v = v20260513_cleanExactLine(row.line_no);
+          if(v) return v;
+
+          if(row.pico_summary && typeof row.pico_summary === 'object'){
+            const vv = v20260513_cleanExactLine(row.pico_summary.line_no);
+            if(vv) return vv;
+          }
+        }
+      }
+    }
+
+    return '';
+  }
+
+  function v20260513_exactSinkerFrom(obj){
+    if(!obj || typeof obj !== 'object') return '';
+
+    const direct = v20260513_cleanExactSinker(obj.sinker_g);
+    if(direct) return direct;
+
+    if(obj.pico_summary && typeof obj.pico_summary === 'object'){
+      const v = v20260513_cleanExactSinker(obj.pico_summary.sinker_g);
+      if(v) return v;
+    }
+
+    if(Array.isArray(obj.pico_logs)){
+      for(const row of obj.pico_logs){
+        if(row && typeof row === 'object'){
+          const v = v20260513_cleanExactSinker(row.sinker_g);
+          if(v) return v;
+
+          if(row.pico_summary && typeof row.pico_summary === 'object'){
+            const vv = v20260513_cleanExactSinker(row.pico_summary.sinker_g);
+            if(vv) return vv;
+          }
+        }
+      }
+    }
+
+    return '';
+  }
+
+  function v20260513_forceExactLineSinker(t, payload){
+    if(!t || typeof t !== 'object') return false;
+
+    let changed = false;
+
+    const line = v20260513_exactLineFrom(payload) || v20260513_exactLineFrom(t);
+    const sinker = v20260513_exactSinkerFrom(payload) || v20260513_exactSinkerFrom(t);
+
+    if(line && t.line_no !== line){
+      t.line_no = line;
+      changed = true;
+    }
+
+    if(sinker && t.sinker_g !== sinker){
+      t.sinker_g = sinker;
+      changed = true;
+    }
+
+    if(changed){
+      t.line_sinker_source = 'exact_line_no_sinker_g';
+      t.line_sinker_auto_ms = Date.now();
+    }
+
+    return changed;
+  }
+
+  function v20260513_forceExactLineSinkerOnPayload(p){
+    if(!p || typeof p !== 'object') return p;
+
+    const line = v20260513_exactLineFrom(p);
+    const sinker = v20260513_exactSinkerFrom(p);
+
+    if(line) p.line_no = line;
+    if(sinker) p.sinker_g = sinker;
+
+    return p;
+  }
+
+  async function repairBadLineSinkerPlaceholders(){
+    let db = null;
+
+    try{
+      db = await openTripDbDirect();
+      const rows = await getAllTripsDirect(db);
+      let fixed = 0;
+
+      for(const t of rows){
+        if(!t || typeof t !== 'object') continue;
+
+        let changed = false;
+
+        changed = v20260513_forceExactLineSinker(t, null) || changed;
+
+        if(!v20260513_exactLineFrom(t) && v20260513_isBadLineSinkerValue(t.line_no)){
+          delete t.line_no;
+          changed = true;
+        }
+
+        if(!v20260513_exactSinkerFrom(t) && v20260513_isBadLineSinkerValue(t.sinker_g)){
+          delete t.sinker_g;
+          changed = true;
+        }
+
+        if(changed){
+          t.updated_ms = Date.now();
+          if(await putTripDirect(db, t)) fixed++;
+        }
+      }
+
+      if(fixed){
+        console.info('[wakasagi] removed bad line/sinker placeholders:', fixed);
+      }
+    }catch(e){
+      console.warn('[wakasagi] repairBadLineSinkerPlaceholders skipped:', e);
+    }finally{
+      try{ if(db) db.close(); }catch(e){}
+    }
+  }
+
   function openTripDbDirect(){
     return new Promise((resolve, reject) => {
       try{
@@ -414,24 +598,47 @@
       for(const t of rows){
         if(!t || typeof t !== 'object') continue;
 
-        const before = String(t.lake_name || t.lakeName || '').trim();
-        if(before) continue;
-
-        const lat = Number(t.lat);
-        const lng = Number(t.lng);
-        if(!validLatLng(lat, lng)) continue;
+        // lake_name が既に入っている履歴も、水深・天気・風・line/sinker補修の対象にする。
+        // ここで continue すると、湖名だけ入った過去履歴の自動補修が一切走らない。
+        const beforeAuto = JSON.stringify({
+          lake_name: t.lake_name || '',
+          line_no: t.line_no || '',
+          sinker_g: t.sinker_g || '',
+          water_depth_m: t.water_depth_m || '',
+          fishfinder_depth_m: t.fishfinder_depth_m || '',
+          weather: t.weather || '',
+          wind: t.wind || ''
+        });
 
         await fillLakeNameForTrip(t);
 
-        const after = String(t.lake_name || t.lakeName || '').trim();
-        if(after){
+        // 既存履歴補修でも、trip本体 / pico_summary / pico_logs の正規キー line_no / sinker_g から実値を復旧する。
+        v20260513_forceExactLineSinker(t, null);
+
+        const needWeather = (isBlankValue(t.weather) || isBlankValue(t.wind)) && fixed < AUTO_REPAIR_MAX_WEATHER_FETCHES;
+        await fillAutoFieldsForTrip(t, rows, { allowWeather: needWeather });
+
+        // fillAutoFields後にも、line/sinkerが未登録へ戻らないよう正規キーを再反映する。
+        v20260513_forceExactLineSinker(t, null);
+
+        const afterAuto = JSON.stringify({
+          lake_name: t.lake_name || '',
+          line_no: t.line_no || '',
+          sinker_g: t.sinker_g || '',
+          water_depth_m: t.water_depth_m || '',
+          fishfinder_depth_m: t.fishfinder_depth_m || '',
+          weather: t.weather || '',
+          wind: t.wind || ''
+        });
+
+        if(afterAuto !== beforeAuto){
           t.updated_ms = Date.now();
           if(await putTripDirect(db, t)) fixed++;
         }
       }
 
       if(fixed){
-        console.info('[wakasagi] repaired lake_name for saved trips:', fixed);
+        console.info('[wakasagi] repaired lake/auto fields for saved trips:', fixed);
       }
     }catch(e){
       console.warn('[wakasagi] saved trip lake repair skipped:', e);
@@ -448,6 +655,575 @@
     const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
     return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
+
+  function isBlankValue(v){
+    return v === undefined || v === null || String(v).trim() === '';
+  }
+
+  function firstNonBlank(){
+    for(const v of arguments){
+      if(!isBlankValue(v)) return String(v).trim();
+    }
+    return '';
+  }
+
+  function sameTripId(a, b){
+    return String((a && a.trip_id) || '') === String((b && b.trip_id) || '');
+  }
+
+  function pickHistoryValue(historyRows, keys){
+    for(const row of historyRows){
+      const t = row && row.t ? row.t : row;
+      if(!t) continue;
+      for(const key of keys){
+        const v = t[key];
+        if(!isBlankValue(v)) return String(v).trim();
+      }
+    }
+    return '';
+  }
+
+  function historyRowsForAutoFill(trip, allTrips, limitM, preferPast){
+    const a = Number(trip && trip.lat);
+    const b = Number(trip && trip.lng);
+    const tm = tripTimeMs(trip);
+
+    if(!validLatLng(a, b) || !Array.isArray(allTrips)) return [];
+
+    let rows = allTrips
+      .filter(x => x && !sameTripId(x, trip) && validLatLng(tripLat(x), tripLng(x)))
+      .map(x => ({ t: x, d: distMeters(a, b, tripLat(x), tripLng(x)), tm: tripTimeMs(x) }))
+      .filter(x => Number.isFinite(x.d) && x.d <= limitM);
+
+    if(preferPast && tm){
+      rows = rows.filter(x => !x.tm || x.tm <= tm);
+    }
+
+    rows.sort((x, y) => {
+      const xt = Number(x.tm || 0);
+      const yt = Number(y.tm || 0);
+      if(yt !== xt) return yt - xt;
+      return x.d - y.d;
+    });
+
+    return rows;
+  }
+
+  function latestRowsForAutoFill(trip, allTrips){
+    if(!Array.isArray(allTrips)) return [];
+
+    return allTrips
+      .filter(x => x && !sameTripId(x, trip))
+      .map(x => ({ t: x, tm: tripTimeMs(x) }))
+      .sort((x, y) => Number(y.tm || 0) - Number(x.tm || 0));
+  }
+
+  function setIfBlank(trip, key, value){
+    if(!trip || !key) return false;
+    if(!isBlankValue(trip[key])) return false;
+    if(isBlankValue(value)) return false;
+    trip[key] = String(value).trim();
+    return true;
+  }
+
+  function isPlaceholderValue(v){
+    const s = String(v == null ? '' : v).trim();
+    return !s || s === AUTO_FIELD_UNREGISTERED || s === AUTO_FIELD_UNAVAILABLE || s === '-' || s === '0' || s === '0.0';
+  }
+
+  function setIfBlankOrPlaceholder(trip, key, value){
+    if(!trip || !key) return false;
+    if(!isPlaceholderValue(trip[key])) return false;
+    if(isBlankValue(value)) return false;
+    trip[key] = String(value).trim();
+    return true;
+  }
+
+  function normalizeDepthMeters(value, keyName){
+    if(value == null || value === '') return '';
+    if(typeof value === 'string'){
+      const s = value.trim();
+      if(!s || s === AUTO_FIELD_UNREGISTERED || s === AUTO_FIELD_UNAVAILABLE) return '';
+      value = s.replace(/[^\d.\-]/g, '');
+    }
+
+    const n = Number(value);
+    if(!Number.isFinite(n)) return '';
+
+    let m = n;
+    const k = String(keyName || '').toLowerCase();
+
+    if(k.includes('mm')){
+      m = n / 1000.0;
+    }else if(Math.abs(n) > 300){
+      // 300を超える水深mは現実的ではないので、mm値とみなす。
+      m = n / 1000.0;
+    }
+
+    if(!Number.isFinite(m) || m <= 0.05 || m > 120) return '';
+
+    return (Math.round(m * 10) / 10).toFixed(1);
+  }
+
+  function pickDepthByKeys(obj, keys){
+    if(!obj || typeof obj !== 'object') return '';
+
+    for(const key of keys){
+      if(Object.prototype.hasOwnProperty.call(obj, key)){
+        const v = normalizeDepthMeters(obj[key], key);
+        if(v) return v;
+      }
+    }
+
+    return '';
+  }
+
+  function firstPositiveDepthFromLogs(logs, baseMs){
+    if(!Array.isArray(logs) || !logs.length) return '';
+
+    const rows = logs
+      .filter(x => x && typeof x === 'object')
+      .map((x, idx) => {
+        const tm = Number(x.t_ms ?? x.ms ?? x.time_ms ?? x.timestamp_ms ?? x.t ?? 0);
+        return {x, idx, tm};
+      })
+      .sort((a, b) => {
+        const at = Number(a.tm || 0);
+        const bt = Number(b.tm || 0);
+        if(at !== bt) return at - bt;
+        return a.idx - b.idx;
+      });
+
+    for(const row of rows){
+      if(baseMs && row.tm && row.tm - baseMs > START_DEPTH_LOOKUP_LIMIT_MS) break;
+
+      const d = pickDepthByKeys(row.x, [
+        'depth_m',
+        'depthM',
+        'depth',
+        'water_depth_m',
+        'depth_mm',
+        'depthMm',
+        'depthMM'
+      ]);
+
+      if(d) return d;
+    }
+
+    return '';
+  }
+
+  function extractStartWaterDepthFromTrip(trip){
+    if(!trip || typeof trip !== 'object') return '';
+
+    // 1) すでに水深として保存済みなら最優先。
+    let d = pickDepthByKeys(trip, [
+      'water_depth_m',
+      'start_water_depth_m',
+      'start_bottom_depth_m',
+      'bottom_depth_m',
+      'initial_depth_m',
+      'first_depth_m',
+      'depth_at_start_m',
+      'start_depth_m',
+      'start_depth',
+      'fishfinder_depth_m',
+      'fishfinder_m'
+    ]);
+    if(d) return d;
+
+    const summaries = [
+      trip.pico_summary,
+      trip.pico_log_summary,
+      trip.log_summary,
+      trip.summary
+    ].filter(x => x && typeof x === 'object');
+
+    // 2) Picoログ要約に開始直後/底取り系の値があれば使う。
+    for(const s of summaries){
+      d = pickDepthByKeys(s, [
+        'water_depth_m',
+        'start_water_depth_m',
+        'start_bottom_depth_m',
+        'bottom_depth_m',
+        'initial_depth_m',
+        'first_depth_m',
+        'depth_at_start_m',
+        'start_depth_m',
+        'startDepthM',
+        'start_depth',
+        'start_depth_mm',
+        'bottom_depth_mm'
+      ]);
+      if(d) return d;
+    }
+
+    // 3) ログ配列があれば、釣行開始直後の最初の有効深度を使う。
+    const logArrays = [
+      trip.raw_logs,
+      trip.tlog,
+      trip.samples,
+      trip.logs
+    ].filter(Array.isArray);
+
+    for(const arr of logArrays){
+      d = firstPositiveDepthFromLogs(arr, 0);
+      if(d) return d;
+    }
+
+    // 4) pico_logs は現在は要約配列の可能性が高いが、詳細が入っている場合だけ拾う。
+    if(Array.isArray(trip.pico_logs)){
+      for(const item of trip.pico_logs){
+        if(item && Array.isArray(item.logs)){
+          d = firstPositiveDepthFromLogs(item.logs, 0);
+          if(d) return d;
+        }
+
+        d = pickDepthByKeys(item, [
+          'water_depth_m',
+          'start_water_depth_m',
+          'start_bottom_depth_m',
+          'bottom_depth_m',
+          'initial_depth_m',
+          'first_depth_m',
+          'depth_at_start_m',
+          'start_depth_m',
+          'start_depth',
+          'start_depth_mm',
+          'bottom_depth_mm'
+        ]);
+        if(d) return d;
+      }
+    }
+
+    // 5) 最後の保険。開始値が無い旧データでは、深度範囲の最大値を水深近似として使う。
+    for(const s of summaries){
+      d = pickDepthByKeys(s, [
+        'depth_max_m',
+        'max_depth_m',
+        'depthMaxM',
+        'maxDepthM',
+        'depth_max',
+        'max_depth',
+        'depth_max_mm',
+        'max_depth_mm'
+      ]);
+      if(d) return d;
+    }
+
+    return '';
+  }
+
+  function applyStartWaterDepth(trip){
+    try{
+      if(!trip || typeof trip !== 'object') return false;
+
+      const d = extractStartWaterDepthFromTrip(trip);
+      let changed = false;
+
+      if(d){
+        changed = setIfBlankOrPlaceholder(trip, 'water_depth_m', d) || changed;
+        changed = setIfBlankOrPlaceholder(trip, 'fishfinder_depth_m', d) || changed;
+        if(changed){
+          trip.water_depth_source = trip.water_depth_source || 'start_bottom_depth';
+          trip.water_depth_auto_ms = Date.now();
+        }
+      }
+
+      return changed;
+    }catch(e){
+      console.warn('[wakasagi] applyStartWaterDepth skipped:', e);
+      return false;
+    }
+  }
+
+  function inheritTripFieldsFromHistory(trip, allTrips){
+    try{
+      if(!trip || typeof trip !== 'object' || !Array.isArray(allTrips)) return false;
+
+      const searchSets = [
+        { rows: historyRowsForAutoFill(trip, allTrips, AUTO_INHERIT_POINT_M, true), source: 'same_point_history_20m_past' },
+        { rows: historyRowsForAutoFill(trip, allTrips, AUTO_INHERIT_AREA_M, true), source: 'nearby_history_100m_past' },
+        { rows: historyRowsForAutoFill(trip, allTrips, AUTO_INHERIT_POINT_M, false), source: 'same_point_history_20m_any' },
+        { rows: historyRowsForAutoFill(trip, allTrips, AUTO_INHERIT_AREA_M, false), source: 'nearby_history_100m_any' },
+        { rows: latestRowsForAutoFill(trip, allTrips), source: 'latest_history_anywhere' }
+      ];
+
+      let changed = applyStartWaterDepth(trip);
+      let source = changed ? 'start_bottom_depth' : '';
+
+      for(const set of searchSets){
+        const rows = set.rows || [];
+        if(!rows.length) continue;
+
+        if(isPlaceholderValue(trip.water_depth_m) && isPlaceholderValue(trip.fishfinder_depth_m)){
+          const v = pickHistoryValue(rows, [
+            'water_depth_m',
+            'start_water_depth_m',
+            'start_bottom_depth_m',
+            'bottom_depth_m',
+            'fishfinder_depth_m',
+            'fishfinder_m',
+            'depth_m'
+          ]);
+          if(v){
+            const d = normalizeDepthMeters(v, 'water_depth_m') || String(v).trim();
+            changed = setIfBlankOrPlaceholder(trip, 'water_depth_m', d) || changed;
+            changed = setIfBlankOrPlaceholder(trip, 'fishfinder_depth_m', d) || changed;
+            source = source || set.source;
+          }
+        }
+
+        if(!isPlaceholderValue(trip.water_depth_m) &&
+           !isPlaceholderValue(trip.fishfinder_depth_m)){
+          break;
+        }
+      }
+
+      // ここまで集めても情報源が無い場合は、viewer上で空欄にならないよう未登録で固定する。
+      // 実値が後で入った場合は、既存値上書き禁止ルールによりここでは上書きしない。
+      if(setIfBlankOrPlaceholder(trip, 'water_depth_m', AUTO_FIELD_UNREGISTERED)) changed = true;
+      if(setIfBlankOrPlaceholder(trip, 'fishfinder_depth_m', AUTO_FIELD_UNREGISTERED)) changed = true;
+
+      if(changed){
+        trip.auto_inherit_source = source || 'no_history_registered';
+        trip.auto_inherit_ms = Date.now();
+      }
+
+      return changed;
+    }catch(e){
+      console.warn('[wakasagi] inheritTripFieldsFromHistory skipped:', e);
+
+      let changed = false;
+      changed = setIfBlankOrPlaceholder(trip, 'water_depth_m', AUTO_FIELD_UNREGISTERED) || changed;
+      changed = setIfBlankOrPlaceholder(trip, 'fishfinder_depth_m', AUTO_FIELD_UNREGISTERED) || changed;
+      return changed;
+    }
+  }
+
+  function weatherCodeJa(code){
+    const c = Number(code);
+    const map = {
+      0:'快晴',
+      1:'晴れ', 2:'一部曇り', 3:'曇り',
+      45:'霧', 48:'霧氷',
+      51:'弱い霧雨', 53:'霧雨', 55:'強い霧雨',
+      56:'弱い着氷性霧雨', 57:'着氷性霧雨',
+      61:'弱い雨', 63:'雨', 65:'強い雨',
+      66:'弱い着氷性雨', 67:'着氷性雨',
+      71:'弱い雪', 73:'雪', 75:'強い雪',
+      77:'雪粒',
+      80:'弱いにわか雨', 81:'にわか雨', 82:'強いにわか雨',
+      85:'弱いにわか雪', 86:'にわか雪',
+      95:'雷雨', 96:'雷雨・弱い雹', 99:'雷雨・雹'
+    };
+    return map[c] || (Number.isFinite(c) ? ('天気コード' + c) : '');
+  }
+
+  function windDirJa(deg){
+    const d = Number(deg);
+    if(!Number.isFinite(d)) return '';
+    const names = ['北','北北東','北東','東北東','東','東南東','南東','南南東','南','南南西','南西','西南西','西','西北西','北西','北北西'];
+    const idx = Math.round((((d % 360) + 360) % 360) / 22.5) % 16;
+    return names[idx];
+  }
+
+  function ymdFromMs(ms){
+    const d = new Date(Number(ms || Date.now()));
+    if(Number.isNaN(d.getTime())) return localDateKey(Date.now());
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  function nearestHourlyIndex(times, ms){
+    if(!Array.isArray(times) || !times.length) return -1;
+    const target = Number(ms || Date.now());
+    let best = -1;
+    let bestD = Infinity;
+    for(let i = 0; i < times.length; i++){
+      const tm = new Date(String(times[i])).getTime();
+      if(!Number.isFinite(tm)) continue;
+      const d = Math.abs(tm - target);
+      if(d < bestD){
+        bestD = d;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  async function fetchJsonTimeout(url, timeoutMs){
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => {
+      try{ ctrl.abort(); }catch(e){}
+    }, timeoutMs || AUTO_WEATHER_TIMEOUT_MS) : null;
+
+    try{
+      const opt = ctrl ? { cache: 'force-cache', signal: ctrl.signal } : { cache: 'force-cache' };
+      const res = await fetch(url, opt);
+      if(!res.ok) throw new Error('weather fetch failed: ' + res.status);
+      return await res.json();
+    }finally{
+      if(timer) clearTimeout(timer);
+    }
+  }
+
+  function weatherApiBaseForDate(ms){
+    const t = Number(ms || Date.now());
+    const now = Date.now();
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    if(t >= now - sevenDaysMs){
+      return 'https://api.open-meteo.com/v1/forecast';
+    }
+    return 'https://archive-api.open-meteo.com/v1/archive';
+  }
+
+  async function getWeatherForTrip(trip){
+    const lat = Number(trip && trip.lat);
+    const lng = Number(trip && trip.lng);
+    const ms = tripTimeMs(trip) || Date.now();
+
+    if(!validLatLng(lat, lng)) return null;
+
+    const dateKey = ymdFromMs(ms);
+    const cacheKey = lat.toFixed(3) + ',' + lng.toFixed(3) + ',' + dateKey;
+    if(weatherCache.has(cacheKey)) return weatherCache.get(cacheKey);
+
+    const base = weatherApiBaseForDate(ms);
+    const url = base +
+      '?latitude=' + encodeURIComponent(lat.toFixed(6)) +
+      '&longitude=' + encodeURIComponent(lng.toFixed(6)) +
+      '&start_date=' + encodeURIComponent(dateKey) +
+      '&end_date=' + encodeURIComponent(dateKey) +
+      '&hourly=weather_code,wind_speed_10m,wind_direction_10m' +
+      '&timezone=auto';
+
+    const data = await fetchJsonTimeout(url, AUTO_WEATHER_TIMEOUT_MS);
+    const h = data && data.hourly ? data.hourly : null;
+    const idx = h ? nearestHourlyIndex(h.time || [], ms) : -1;
+
+    if(!h || idx < 0){
+      weatherCache.set(cacheKey, null);
+      return null;
+    }
+
+    const wc = Array.isArray(h.weather_code) ? h.weather_code[idx] : null;
+    const ws = Array.isArray(h.wind_speed_10m) ? h.wind_speed_10m[idx] : null;
+    const wd = Array.isArray(h.wind_direction_10m) ? h.wind_direction_10m[idx] : null;
+
+    const weather = weatherCodeJa(wc);
+    const dir = windDirJa(wd);
+    const spd = Number(ws);
+    const wind = (dir || Number.isFinite(spd))
+      ? (dir + (Number.isFinite(spd) ? ' ' + spd.toFixed(1) + 'm/s' : '')).trim()
+      : '';
+
+    const out = {
+      weather,
+      wind,
+      weather_source: base.includes('archive-api') ? 'open_meteo_archive' : 'open_meteo_forecast',
+      weather_ms: Date.now()
+    };
+
+    weatherCache.set(cacheKey, out);
+    return out;
+  }
+
+  async function fillWeatherForTrip(trip){
+    try{
+      if(!trip || typeof trip !== 'object') return false;
+      if(!isBlankValue(trip.weather) && !isBlankValue(trip.wind)) return false;
+
+      const w = await getWeatherForTrip(trip);
+      let changed = false;
+
+      if(w){
+        if(isBlankValue(trip.weather) && w.weather){
+          trip.weather = w.weather;
+          changed = true;
+        }
+
+        if(isBlankValue(trip.wind) && w.wind){
+          trip.wind = w.wind;
+          changed = true;
+        }
+
+        if(changed){
+          trip.weather_source = w.weather_source || '';
+          trip.weather_auto_ms = w.weather_ms || Date.now();
+        }
+      }
+
+      // 天気APIに届かない、または座標/日時の問題で値が取れない場合も空欄にしない。
+      if(isBlankValue(trip.weather)){
+        trip.weather = AUTO_FIELD_UNAVAILABLE;
+        trip.weather_source = trip.weather_source || 'open_meteo_unavailable';
+        trip.weather_auto_ms = trip.weather_auto_ms || Date.now();
+        changed = true;
+      }
+
+      if(isBlankValue(trip.wind)){
+        trip.wind = AUTO_FIELD_UNAVAILABLE;
+        trip.weather_source = trip.weather_source || 'open_meteo_unavailable';
+        trip.weather_auto_ms = trip.weather_auto_ms || Date.now();
+        changed = true;
+      }
+
+      return changed;
+    }catch(e){
+      console.warn('[wakasagi] fillWeatherForTrip skipped:', e);
+
+      let changed = false;
+
+      if(setIfBlank(trip, 'weather', AUTO_FIELD_UNAVAILABLE)){
+        trip.weather_source = trip.weather_source || 'open_meteo_error';
+        trip.weather_auto_ms = trip.weather_auto_ms || Date.now();
+        changed = true;
+      }
+
+      if(setIfBlank(trip, 'wind', AUTO_FIELD_UNAVAILABLE)){
+        trip.weather_source = trip.weather_source || 'open_meteo_error';
+        trip.weather_auto_ms = trip.weather_auto_ms || Date.now();
+        changed = true;
+      }
+
+      return changed;
+    }
+  }
+
+  async function fillAutoFieldsForTrip(trip, allTrips, opt){
+    let changed = false;
+
+    try{
+      changed = applyStartWaterDepth(trip) || changed;
+    }catch(e){
+      console.warn('[wakasagi] start water depth auto-fill skipped:', e);
+    }
+
+    try{
+      if(!Array.isArray(allTrips)){
+        const getAll = getGlobalFunction('getAllTrips');
+        if(getAll) allTrips = await getAll();
+      }
+
+      if(Array.isArray(allTrips)){
+        changed = inheritTripFieldsFromHistory(trip, allTrips) || changed;
+      }
+    }catch(e){
+      console.warn('[wakasagi] history auto-fill skipped:', e);
+    }
+
+    try{
+      const allowWeather = !opt || opt.allowWeather !== false;
+      if(allowWeather){
+        changed = (await fillWeatherForTrip(trip)) || changed;
+      }
+    }catch(e){
+      console.warn('[wakasagi] weather auto-fill skipped:', e);
+    }
+
+    return changed;
+  }
+
 
   function tripTimeMs(t){
     return Number((t && (t.date_ms || t.start_ms || t.created_ms || t.updated_ms)) || 0);
@@ -557,13 +1333,18 @@
     if(originalApply[APPLY_WRAP_FLAG]) return true;
 
     const wrappedApply = async function(p){
+      v20260513_forceExactLineSinkerOnPayload(p);
+
       const originalPutTrip = getGlobalFunction('putTrip');
       if(!originalPutTrip){
         return await originalApply.call(this, p);
       }
 
       const wrappedPutTrip = async function(t){
+        v20260513_forceExactLineSinker(t, p);
         await fillLakeNameForTrip(t);
+        await fillAutoFieldsForTrip(t, null, { allowWeather: true });
+        v20260513_forceExactLineSinker(t, p);
         return await originalPutTrip.call(this, t);
       };
 
@@ -589,6 +1370,30 @@
     return true;
   }
 
+  function installPutTripLineSinkerRepairWrapper(){
+    const originalPutTrip = getGlobalFunction('putTrip');
+    if(!originalPutTrip) return false;
+    if(originalPutTrip.__wakasagiLineSinkerPutTripRepair20260513) return true;
+
+    const wrappedPutTrip = async function(t){
+      try{
+        v20260513_forceExactLineSinker(t, null);
+      }catch(e){
+        console.warn('[wakasagi] putTrip line/sinker repair skipped:', e);
+      }
+
+      return await originalPutTrip.call(this, t);
+    };
+
+    wrappedPutTrip.__wakasagiLineSinkerPutTripRepair20260513 = true;
+    wrappedPutTrip.__original = originalPutTrip;
+
+    setGlobalPutTrip(wrappedPutTrip);
+
+    console.info('[wakasagi] putTrip line/sinker repair wrapper installed');
+    return true;
+  }
+
   async function addHistoryCountsToMaplinkPayload(payload){
     try{
       if(!payload || typeof payload !== 'object') return payload;
@@ -610,6 +1415,24 @@
       if(!getAll) return payload;
 
       const trips = await getAll();
+
+      // Pico Wへ戻すpayloadには、水深だけ同地点履歴から補完する。
+      // line_no / sinker_g は本体ログの正規キーだけを使うため、ここでは履歴補完しない。
+      const tmpAuto = {
+        trip_id: '__maplink_payload__',
+        lat: baseLat,
+        lng: baseLng,
+        date_ms: Date.now(),
+        water_depth_m: payload.water_depth_m || payload.fishfinder_m || payload.fishfinder_depth_m || '',
+        fishfinder_depth_m: payload.fishfinder_m || payload.fishfinder_depth_m || ''
+      };
+      inheritTripFieldsFromHistory(tmpAuto, trips);
+      if(!String(payload.fishfinder_m || payload.fishfinder_depth_m || payload.water_depth_m || '').trim()){
+        const wd = tmpAuto.water_depth_m || tmpAuto.fishfinder_depth_m || AUTO_FIELD_UNREGISTERED;
+        payload.water_depth_m = wd;
+        payload.fishfinder_m = wd;
+        payload.fishfinder_depth_m = wd;
+      }
       const same20 = samePointRows(trips, baseLat, baseLng, SAME_POINT_M);
       const same100 = samePointRows(trips, baseLat, baseLng, SAME_AREA_M);
       const todayKey = localDateKey(Date.now());
@@ -677,8 +1500,9 @@
     const a = installFindTripFix();
     const b = installLakeNameWrapper();
     const c = installMaplinkCountsWrapper();
+    const d = installPutTripLineSinkerRepairWrapper();
 
-    if(a && b && c) return;
+    if(a && b && c && d) return;
 
     if(tries < 100){
       setTimeout(retryInstall, 100);
@@ -686,6 +1510,7 @@
       if(!a) console.warn('[wakasagi] could not install logsync find-trip fix');
       if(!b) console.warn('[wakasagi] could not install lake_autofill wrapper');
       if(!c) console.warn('[wakasagi] could not install maplink count wrapper');
+      if(!d) console.warn('[wakasagi] could not install putTrip line/sinker repair wrapper');
     }
   }
 
@@ -693,13 +1518,24 @@
 
   // 既に保存済みの「湖名なし」データも補修する。
   // 1回目は初期表示後、2回目は app.js のDB初期化が遅れた場合の保険。
+
   setTimeout(repairSavedTripLakeNames, 1200);
   setTimeout(repairSavedTripLakeNames, 5000);
+  setTimeout(repairBadLineSinkerPlaceholders, 1300);
+  setTimeout(repairBadLineSinkerPlaceholders, 5200);
 
   window.__wakasagiLakeAutofill = {
-    version: 'production-logsync-count-and-lake-name-fix-20260512',
+    version: 'production-repair-all-history-fields-20260513',
     fillLakeNameForTrip,
+    fillAutoFieldsForTrip,
+    fillWeatherForTrip,
+    inheritTripFieldsFromHistory,
+    extractStartWaterDepthFromTrip,
+    applyStartWaterDepth,
     repairSavedTripLakeNames,
+    repairBadLineSinkerPlaceholders,
+    v20260513_forceExactLineSinker,
+    v20260513_forceExactLineSinkerOnPayload,
     guessLakeNameFromLatLng,
     guessLakeNameBuiltIn,
     fixedFindTripForLogSync,
