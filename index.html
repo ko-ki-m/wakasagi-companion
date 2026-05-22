@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="Wakasagi Map">
   <meta name="google" content="notranslate">
   <meta name="format-detection" content="telephone=no">
-  <title>Wakasagi Map v11.5</title>
+  <title>Wakasagi Map v11.7</title>
   <link rel="manifest" href="./manifest.webmanifest?v=115">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="./style.css?v=115">
@@ -22,7 +22,7 @@
 
   <header class="topbar">
     <div>
-      <div class="version">Wakasagi Map v11.5</div>
+      <div class="version">Wakasagi Map v11.7</div>
       <h1>過去釣行履歴マップ</h1>
     </div>
     <span id="secureBadge" class="badge warn">確認中</span>
@@ -30,6 +30,7 @@
 
   <section class="mapArea">
     <div id="map"></div>
+
     <div class="mapPanel top">
       <div id="mapStatus">地図を準備しています...</div>
       <div class="mapButtons">
@@ -39,6 +40,7 @@
         <button id="btnSaveScroll" class="good" disabled>保存</button>
       </div>
     </div>
+
     <div class="mapPanel bottom">
       <div class="miniStat"><span>全履歴</span><strong id="totalTrips">-</strong></div>
       <div class="miniStat"><span>10m内</span><strong id="count20">-</strong></div>
@@ -52,7 +54,7 @@
       <div class="cardHead">
         <div>
           <h2>選択した釣行回の詳細</h2>
-          <p id="selectedLead">地図の数字ピンから日付を選ぶと詳細を表示します。全履歴から1回分を選ぶこともできます。</p>
+          <p id="selectedLead">地図の数字ピン、または下の全履歴から1回分を選ぶと詳細を表示します。</p>
         </div>
         <span id="selectedBadge" class="pill">未選択</span>
       </div>
@@ -80,7 +82,7 @@
       <div class="cardHead">
         <div>
           <h2>選択ポイントの過去履歴</h2>
-          <p>地図ピンを選ぶと、その場所の10m以内の同一物理ポイント履歴を日付別に表示します。同日複数件は時刻一覧を挟みます。</p>
+          <p>地図ピンを選ぶと、その場所の10m以内を同じ物理地点としてまとめ、まず日付一覧を表示します。</p>
         </div>
         <span id="pointBadge" class="pill">未選択</span>
       </div>
@@ -186,13 +188,12 @@
     </section>
 
     <footer>
-      v11.5 + stage1: 地図ピンは10m以内の物理ポイント、数字は過去釣行日数。日付→同日複数なら時刻→詳細の順に表示します。
+      v11: 全過去履歴を常時表示し、地図ピンまたは履歴1件の選択で、選択した釣行回の詳細を必ず表示します。Pico W本体ログ・sid・FISHは作りません。
     </footer>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-  <script src="./app_clean_autolink_idb.js?v=20260516" defer></script>
-  <script src="./wakasagi_stage1_point_dates.js?v=20260522a" defer></script>
+  <script src="./app_stage1_point_date_20260522b.js?v=20260522b" defer></script>
   <script src="./lake_autofill.js?v=20260512" defer></script>
 </body>
 </html>
