@@ -3,112 +3,151 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#07111f">
-  <meta name="google" content="notranslate">
   <title>Wakasagi GPS Bridge</title>
   <style>
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#07111f;color:#f8fafc;}
-    main{max-width:680px;margin:0 auto;padding:22px 16px;}
-    .card{background:#0f172a;border:1px solid rgba(255,255,255,.14);border-radius:18px;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.25);}
+    :root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111;background:#f7f7f7;}
+    body{margin:0;padding:20px;line-height:1.6;}
+    .card{max-width:560px;margin:0 auto;padding:18px;border-radius:16px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.10);}
     h1{font-size:22px;margin:0 0 10px;}
-    p{line-height:1.65;color:#cbd5e1;}
-    #status{font-size:16px;font-weight:700;color:#fff;margin:12px 0;}
-    button{font-size:17px;font-weight:700;border:0;border-radius:14px;padding:14px 18px;background:#38bdf8;color:#00111c;width:100%;margin-top:12px;}
-    pre{white-space:pre-wrap;word-break:break-word;background:#020617;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px;color:#dbeafe;max-height:220px;overflow:auto;}
-    .warn{color:#fbbf24;}.bad{color:#fb7185;}.good{color:#86efac;}
+    p{margin:8px 0;}
+    .status{font-size:20px;font-weight:700;margin:16px 0;padding:12px;border-radius:12px;background:#f0f0f0;}
+    .small{font-size:14px;color:#555;}
+    button{width:100%;font-size:20px;font-weight:700;padding:14px 16px;border:0;border-radius:14px;background:#111;color:#fff;}
+    button:disabled{opacity:.45;}
+    .err{background:#ffe8e8;color:#8a0000;}
+    .ok{background:#e9f8ec;color:#075d1a;}
   </style>
 </head>
 <body>
-<main>
-  <div class="card">
+  <main class="card">
     <h1>Wakasagi GPS Bridge</h1>
-    <p>HTTPSでスマホGPSを取得し、Pico Wのログページへ戻します。地図表示用ページではありません。</p>
-    <div id="status">準備中...</div>
-    <button id="retry" type="button">GPSを取得して戻る</button>
-    <pre id="debug"></pre>
-  </div>
-</main>
+    <p>HTTPSでスマホGPSを取得し、Pico Wのログページへ戻します。</p>
+    <div id="status" class="status">準備中...</div>
+    <button id="btn" type="button">GPSを取得して戻る</button>
+    <p id="detail" class="small"></p>
+  </main>
+
 <script>
 (function(){
   'use strict';
 
-  const $ = id => document.getElementById(id);
-  const status = $('status');
-  const debug = $('debug');
-  const retry = $('retry');
+  const statusEl = document.getElementById('status');
+  const detailEl = document.getElementById('detail');
+  const btn = document.getElementById('btn');
 
-  function setStatus(text, cls){
-    status.textContent = text;
-    status.className = cls || '';
+  const qs = new URLSearchParams(location.search);
+  const returnUrl = qs.get('return_url') || '';
+  const sid = qs.get('sid') || '';
+  let running = false;
+  let returned = false;
+
+  function setStatus(text, kind){
+    statusEl.textContent = text;
+    statusEl.className = 'status' + (kind ? ' ' + kind : '');
   }
 
-  function param(name){
-    return new URLSearchParams(location.search).get(name) || '';
+  function setDetail(text){
+    detailEl.textContent = text || '';
   }
 
-  function b64(obj){
-    return btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
-  }
-
-  function safeReturnUrl(){
-    const u = param('return_url');
-    if(!u) return '';
-    try{
-      const parsed = new URL(u, location.href);
-      if(parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
-      return parsed.href.split('#')[0];
-    }catch(e){
-      return '';
+  function encodePayload(obj){
+    const json = JSON.stringify(obj);
+    if(window.TextEncoder){
+      const bytes = new TextEncoder().encode(json);
+      let bin = '';
+      for(let i=0;i<bytes.length;i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin);
     }
+    return btoa(unescape(encodeURIComponent(json)));
+  }
+
+  function buildBackUrl(payload){
+    const base = String(returnUrl || '').split('#')[0];
+    const b64 = encodePayload(payload);
+    return base + '#gpsbridge=' + encodeURIComponent(b64);
+  }
+
+  function validateReturnUrl(){
+    if(!returnUrl){
+      setStatus('戻り先がありません', 'err');
+      setDetail('Pico Wの/logから開き直してください。');
+      return false;
+    }
+    return true;
   }
 
   function goBackWithPosition(pos){
-    const c = pos.coords || {};
+    if(returned) return;
+    returned = true;
+
+    const c = pos && pos.coords ? pos.coords : {};
+    const lat = Number(c.latitude);
+    const lng = Number(c.longitude);
+    const acc = Number(c.accuracy || 0);
+    const posMs = Number(pos && pos.timestamp ? pos.timestamp : Date.now());
+
+    if(!Number.isFinite(lat) || !Number.isFinite(lng)){
+      returned = false;
+      setStatus('GPS値が不正です', 'err');
+      btn.disabled = false;
+      return;
+    }
+
     const payload = {
-      v:1,
-      source:'github_gps_bridge_20260522a',
-      sid:param('sid'),
-      lat:Number(c.latitude),
-      lng:Number(c.longitude),
-      acc:Number(c.accuracy || 0),
-      pos_ms:Number(pos.timestamp || Date.now()),
-      t_ms:Date.now()
+      sid: sid,
+      lat: lat.toFixed(7),
+      lng: lng.toFixed(7),
+      acc: Number.isFinite(acc) ? acc.toFixed(1) : '',
+      pos_ms: posMs,
+      t_ms: Date.now(),
+      source: 'github_gps_bridge'
     };
 
-    const returnUrl = safeReturnUrl();
-    debug.textContent = JSON.stringify(payload, null, 2);
-
-    if(!returnUrl){
-      setStatus('戻り先URLがありません。', 'bad');
-      return;
-    }
-
-    setStatus('Pico Wログへ戻ります...', 'good');
-    location.href = returnUrl + '#gpsbridge=' + encodeURIComponent(b64(payload));
+    setStatus('GPS取得済み。ログへ戻ります...', 'ok');
+    setDetail('緯度 ' + payload.lat + ' / 経度 ' + payload.lng + ' / 精度 ' + payload.acc + 'm');
+    location.replace(buildBackUrl(payload));
   }
 
-  function requestGps(){
-    if(!window.isSecureContext){
-      setStatus('HTTPSではないためGPSを取得できません。', 'bad');
-      return;
-    }
+  function fail(err){
+    running = false;
+    btn.disabled = false;
+    const msg = err && err.message ? err.message : 'unknown';
+    setStatus('GPS取得失敗', 'err');
+    setDetail(msg);
+  }
+
+  function startGps(){
+    if(running || returned) return;
+    if(!validateReturnUrl()) return;
+
     if(!('geolocation' in navigator)){
-      setStatus('このブラウザはGPS取得に対応していません。', 'bad');
+      setStatus('GPS不可: geolocationなし', 'err');
+      setDetail('このブラウザでは位置情報APIが使えません。');
       return;
     }
 
-    setStatus('スマホGPSを取得しています...', 'warn');
+    running = true;
+    btn.disabled = true;
+    setStatus('現在地を取得中...', '');
+    setDetail('位置情報の許可を求められたら許可してください。');
+
     navigator.geolocation.getCurrentPosition(
       goBackWithPosition,
-      err => {
-        setStatus('GPS取得失敗: ' + (err && err.message ? err.message : 'unknown'), 'bad');
-      },
-      {enableHighAccuracy:true, timeout:15000, maximumAge:5000}
+      fail,
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0
+      }
     );
   }
 
-  retry.addEventListener('click', requestGps);
-  setTimeout(requestGps, 300);
+  btn.addEventListener('click', startGps);
+
+  if(validateReturnUrl()){
+    setStatus('GPSを取得します...', '');
+    setTimeout(startGps, 300);
+  }
 })();
 </script>
 </body>
