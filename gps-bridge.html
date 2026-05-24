@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
   <title>Wakasagi GPS Bridge</title>
   <style>
     :root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111;background:#f7f7f7;}
@@ -11,7 +13,7 @@
     h1{font-size:22px;margin:0 0 10px;}
     p{margin:8px 0;}
     .status{font-size:20px;font-weight:700;margin:16px 0;padding:12px;border-radius:12px;background:#f0f0f0;}
-    .small{font-size:14px;color:#555;}
+    .small{font-size:14px;color:#555;word-break:break-word;}
     button{width:100%;font-size:20px;font-weight:700;padding:14px 16px;border:0;border-radius:14px;background:#111;color:#fff;}
     button:disabled{opacity:.45;}
     .err{background:#ffe8e8;color:#8a0000;}
@@ -38,8 +40,19 @@
   const qs = new URLSearchParams(location.search);
   const returnUrl = qs.get('return_url') || '';
   const sid = qs.get('sid') || '';
+
+  const startedAt = Date.now();
+  const MIN_WAIT_MS = 3500;
+  const MAX_WAIT_MS = 18000;
+  const GOOD_ACC_M = 35;
+
   let running = false;
   let returned = false;
+  let watchId = null;
+  let latest = null;
+  let best = null;
+  let samples = 0;
+  let finishTimer = null;
 
   function setStatus(text, kind){
     statusEl.textContent = text;
@@ -76,39 +89,101 @@
     return true;
   }
 
-  function goBackWithPosition(pos){
-    if(returned) return;
-    returned = true;
+  function stopWatch(){
+    if(watchId !== null){
+      try{ navigator.geolocation.clearWatch(watchId); }catch(e){}
+      watchId = null;
+    }
+    if(finishTimer){
+      clearTimeout(finishTimer);
+      finishTimer = null;
+    }
+  }
 
+  function toSimplePosition(pos){
     const c = pos && pos.coords ? pos.coords : {};
     const lat = Number(c.latitude);
     const lng = Number(c.longitude);
     const acc = Number(c.accuracy || 0);
-    const posMs = Number(pos && pos.timestamp ? pos.timestamp : Date.now());
+    const ts = Number(pos && pos.timestamp ? pos.timestamp : Date.now());
+    if(!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return {
+      lat: lat,
+      lng: lng,
+      acc: Number.isFinite(acc) ? acc : 999999,
+      ts: Number.isFinite(ts) ? ts : Date.now()
+    };
+  }
 
-    if(!Number.isFinite(lat) || !Number.isFinite(lng)){
-      returned = false;
-      setStatus('GPS値が不正です', 'err');
-      btn.disabled = false;
+  function isBetter(a, b){
+    if(!b) return true;
+    const aFresh = a.ts >= startedAt - 1000;
+    const bFresh = b.ts >= startedAt - 1000;
+    if(aFresh !== bFresh) return aFresh;
+    if(a.acc !== b.acc) return a.acc < b.acc;
+    return a.ts > b.ts;
+  }
+
+  function updatePosition(pos){
+    if(returned) return;
+
+    const p = toSimplePosition(pos);
+    if(!p) return;
+
+    samples += 1;
+    latest = p;
+    if(isBetter(p, best)) best = p;
+
+    const elapsed = Date.now() - startedAt;
+    const ageSec = Math.max(0, (Date.now() - p.ts) / 1000);
+    setStatus('現在地を測位中... ' + samples + '回', '');
+    setDetail(
+      '緯度 ' + p.lat.toFixed(7) +
+      ' / 経度 ' + p.lng.toFixed(7) +
+      ' / 精度 ' + p.acc.toFixed(1) + 'm' +
+      ' / 位置情報年齢 ' + ageSec.toFixed(1) + '秒'
+    );
+
+    const freshEnough = p.ts >= startedAt - 1000;
+    const canReturnByGoodAccuracy = elapsed >= 2500 && freshEnough && p.acc <= GOOD_ACC_M;
+    const canReturnBySamples = elapsed >= MIN_WAIT_MS && freshEnough && samples >= 2;
+    if(canReturnByGoodAccuracy || canReturnBySamples){
+      finish('ok');
+    }
+  }
+
+  function finish(reason){
+    if(returned) return;
+
+    const p = best || latest;
+    if(!p){
+      if(Date.now() - startedAt >= MAX_WAIT_MS){
+        fail({message:'位置情報が取得できませんでした'});
+      }
       return;
     }
 
+    returned = true;
+    stopWatch();
+
     const payload = {
       sid: sid,
-      lat: lat.toFixed(7),
-      lng: lng.toFixed(7),
-      acc: Number.isFinite(acc) ? acc.toFixed(1) : '',
-      pos_ms: posMs,
+      lat: p.lat.toFixed(7),
+      lng: p.lng.toFixed(7),
+      acc: Number.isFinite(p.acc) ? p.acc.toFixed(1) : '',
+      pos_ms: p.ts,
       t_ms: Date.now(),
-      source: 'github_gps_bridge'
+      samples: samples,
+      source: 'github_gps_bridge_watch'
     };
 
     setStatus('GPS取得済み。ログへ戻ります...', 'ok');
-    setDetail('緯度 ' + payload.lat + ' / 経度 ' + payload.lng + ' / 精度 ' + payload.acc + 'm');
+    setDetail('緯度 ' + payload.lat + ' / 経度 ' + payload.lng + ' / 精度 ' + payload.acc + 'm / samples=' + samples);
     location.replace(buildBackUrl(payload));
   }
 
   function fail(err){
+    stopWatch();
     running = false;
     btn.disabled = false;
     const msg = err && err.message ? err.message : 'unknown';
@@ -131,15 +206,23 @@
     setStatus('現在地を取得中...', '');
     setDetail('位置情報の許可を求められたら許可してください。');
 
-    navigator.geolocation.getCurrentPosition(
-      goBackWithPosition,
-      fail,
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0
-      }
-    );
+    try{
+      watchId = navigator.geolocation.watchPosition(
+        updatePosition,
+        fail,
+        {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0
+        }
+      );
+
+      finishTimer = setTimeout(function(){
+        finish('timeout');
+      }, MAX_WAIT_MS);
+    }catch(e){
+      fail(e);
+    }
   }
 
   btn.addEventListener('click', startGps);
