@@ -1,19 +1,27 @@
 // Wakasagi Companion offline GPS link service worker
-// Version: 2026-05-14 auto-gps-2
+// Version: 2026-05-25 ap-shell-current-map
 // 目的:
 // - GitHub Pages本体を事前キャッシュし、PicoW-Config接続中でもキャッシュ済みで起動できるようにする。
-// - 地図タイルが読めない環境でも、GPS取得→Pico W /log#maplink の自動連携を成立させる。
+// - 現在の index.html が読み込む Map 本体JS/CSSをキャッシュ対象に含める。
+// - 地図タイル/CDNが読めない環境でも、GPS取得→Pico W /log#maplink の自動連携を成立させる。
 // 注意:
-// - 初回だけはインターネット接続中にGitHub Pagesを一度開く必要がある。以後は通常起動時に自動更新する。
-// - 外部地図タイルはオフラインでは保証しない。実釣中の本体連携では地図表示ではなくGPS連携を優先する。
+// - 初回または更新直後は、インターネット接続中にGitHub Pagesを一度開いて、このService Workerを更新する必要がある。
+// - 外部地図タイル/Leaflet CDNはオフラインでは保証しない。実釣中の本体連携では地図表示よりGPS連携を優先する。
 
-const CACHE_NAME = 'wakasagi-companion-shell-v20260514-auto-gps-2';
+const CACHE_NAME = 'wakasagi-companion-shell-v20260525-ap-shell-current-map';
 const APP_SHELL = [
   './',
   './index.html',
+  './style.css',
+  './app_stage1_point_date_20260522c.js',
+  './app_stage2_visit_receiver_20260522e.js',
+  './lake_autofill.js',
+  './gps-bridge.html',
   './app.js',
   './manifest.webmanifest',
-  './manifest.json'
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png'
 ];
 
 async function cacheAppShell(){
@@ -55,7 +63,7 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(req.url);
 
-  // GitHub Pages内のページ遷移は、ネットワーク優先。失敗時はキャッシュ済みindexを返す。
+  // GitHub Pages内のページ遷移はネットワーク優先。AP/オフラインで失敗した時だけキャッシュ済みindexを返す。
   if(req.mode === 'navigate' || req.destination === 'document'){
     event.respondWith((async()=>{
       try{
@@ -72,7 +80,8 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // 同一オリジンのapp.js等はキャッシュ優先、裏で更新。
+  // 同一オリジンのMap本体JS/CSS/manifest/icon等はキャッシュ優先、裏で更新。
+  // index.html 側の ?v=... 付き読み込みにも ignoreSearch:true で対応する。
   if(url.origin === self.location.origin){
     event.respondWith((async()=>{
       const cache = await caches.open(CACHE_NAME);
@@ -88,5 +97,6 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // 外部タイル/CDNは通常ネットワークへ流す。オフラインでは地図表示を諦め、GPS連携を優先する。
+  // 外部Leaflet/CDN/地図タイルは通常ネットワークへ流す。
+  // AP/オフラインでは失敗しても、app_stage1側がGPS連携を継続する前提。
 });
