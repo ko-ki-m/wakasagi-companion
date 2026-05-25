@@ -41,6 +41,7 @@
 
   const AUTO_FIELD_UNREGISTERED = '未登録';
   const AUTO_FIELD_UNAVAILABLE = '取得不可';
+  const AUTO_FIELD_PENDING = '取得待ち';
   const START_DEPTH_LOOKUP_LIMIT_MS = 180000;
 
   // viewer/lakes が未読込・圏外・Pico W Wi-Fi中で外部JSONを読めない場合の最後の保険。
@@ -510,6 +511,7 @@
       db = await openTripDbDirect();
       const rows = await getAllTripsDirect(db);
       let fixed = 0;
+      let weatherAttempts = 0;
 
       for(const t of rows){
         if(!t || typeof t !== 'object') continue;
@@ -594,6 +596,7 @@
       db = await openTripDbDirect();
       const rows = await getAllTripsDirect(db);
       let fixed = 0;
+      let weatherAttempts = 0;
 
       for(const t of rows){
         if(!t || typeof t !== 'object') continue;
@@ -607,7 +610,9 @@
           water_depth_m: t.water_depth_m || '',
           fishfinder_depth_m: t.fishfinder_depth_m || '',
           weather: t.weather || '',
-          wind: t.wind || ''
+          wind: t.wind || '',
+          temp_min_c: t.temp_min_c || '',
+          temp_max_c: t.temp_max_c || ''
         });
 
         await fillLakeNameForTrip(t);
@@ -615,8 +620,10 @@
         // 既存履歴補修でも、trip本体 / pico_summary / pico_logs の正規キー line_no / sinker_g から実値を復旧する。
         v20260513_forceExactLineSinker(t, null);
 
-        const needWeather = (isBlankValue(t.weather) || isBlankValue(t.wind)) && fixed < AUTO_REPAIR_MAX_WEATHER_FETCHES;
-        await fillAutoFieldsForTrip(t, rows, { allowWeather: needWeather });
+        const needWeather = tripNeedsWeatherAutoFill(t);
+        const allowWeather = needWeather && weatherAttempts < AUTO_REPAIR_MAX_WEATHER_FETCHES;
+        if(allowWeather) weatherAttempts++;
+        await fillAutoFieldsForTrip(t, rows, { allowWeather: allowWeather });
 
         // fillAutoFields後にも、line/sinkerが未登録へ戻らないよう正規キーを再反映する。
         v20260513_forceExactLineSinker(t, null);
@@ -628,7 +635,9 @@
           water_depth_m: t.water_depth_m || '',
           fishfinder_depth_m: t.fishfinder_depth_m || '',
           weather: t.weather || '',
-          wind: t.wind || ''
+          wind: t.wind || '',
+          temp_min_c: t.temp_min_c || '',
+          temp_max_c: t.temp_max_c || ''
         });
 
         if(afterAuto !== beforeAuto){
@@ -658,6 +667,67 @@
 
   function isBlankValue(v){
     return v === undefined || v === null || String(v).trim() === '';
+  }
+
+  function isWeatherPlaceholder(v){
+    const x = String(v === undefined || v === null ? '' : v).trim();
+    return !x || x === AUTO_FIELD_UNAVAILABLE || x === AUTO_FIELD_PENDING || x === '-' || x === '未取得';
+  }
+
+  function tempNumOrNull(v){
+    const x = Number(v);
+    return Number.isFinite(x) ? x : null;
+  }
+
+  function formatTempC(v){
+    const x = tempNumOrNull(v);
+    if(x === null) return '';
+    return x.toFixed(1).replace(/\.0$/, '') + '℃';
+  }
+
+  function hasTempRangeText(v){
+    const x = String(v === undefined || v === null ? '' : v);
+    return (x.indexOf('最低') >= 0 && x.indexOf('最高') >= 0);
+  }
+
+  function stripTempRangeText(v){
+    return String(v === undefined || v === null ? '' : v)
+      .replace(/\s*[（(]\s*(?:最低|最高)[^）)]*(?:最低|最高)[^）)]*[）)]/g, '')
+      .replace(/\s*(?:最低|最高)-?\d+(?:\.\d+)?℃\s*[\/／]\s*(?:最低|最高)-?\d+(?:\.\d+)?℃/g, '')
+      .trim();
+  }
+
+  function weatherTextWithTemp(weather, tempMinC, tempMaxC){
+    const base = stripTempRangeText(weather) || '';
+    const minText = formatTempC(tempMinC);
+    const maxText = formatTempC(tempMaxC);
+    const range = [];
+    if(minText) range.push('最低' + minText);
+    if(maxText) range.push('最高' + maxText);
+    if(!range.length) return base;
+    return (base || '天気') + '（' + range.join(' / ') + '）';
+  }
+
+  function tripNeedsWeatherAutoFill(trip){
+    if(!trip || typeof trip !== 'object') return false;
+    if(isWeatherPlaceholder(trip.weather) || isWeatherPlaceholder(trip.wind)) return true;
+    if(!hasTempRangeText(trip.weather)) return true;
+    if(isBlankValue(trip.temp_min_c) || isBlankValue(trip.temp_max_c)) return true;
+    return false;
+  }
+
+  function tripWeatherLat(trip){
+    return Number(trip && (
+      trip.lat || trip.gps_lat || trip.latest_lat ||
+      (trip.pico_summary && trip.pico_summary.gps_lat)
+    ));
+  }
+
+  function tripWeatherLng(trip){
+    return Number(trip && (
+      trip.lng || trip.gps_lng || trip.latest_lng ||
+      (trip.pico_summary && trip.pico_summary.gps_lng)
+    ));
   }
 
   function firstNonBlank(){
@@ -1078,8 +1148,8 @@
   }
 
   async function getWeatherForTrip(trip){
-    const lat = Number(trip && trip.lat);
-    const lng = Number(trip && trip.lng);
+    const lat = tripWeatherLat(trip);
+    const lng = tripWeatherLng(trip);
     const ms = tripTimeMs(trip) || Date.now();
 
     if(!validLatLng(lat, lng)) return null;
@@ -1095,10 +1165,12 @@
       '&start_date=' + encodeURIComponent(dateKey) +
       '&end_date=' + encodeURIComponent(dateKey) +
       '&hourly=weather_code,wind_speed_10m,wind_direction_10m' +
+      '&daily=temperature_2m_max,temperature_2m_min' +
       '&timezone=auto';
 
     const data = await fetchJsonTimeout(url, AUTO_WEATHER_TIMEOUT_MS);
     const h = data && data.hourly ? data.hourly : null;
+    const d = data && data.daily ? data.daily : null;
     const idx = h ? nearestHourlyIndex(h.time || [], ms) : -1;
 
     if(!h || idx < 0){
@@ -1109,8 +1181,11 @@
     const wc = Array.isArray(h.weather_code) ? h.weather_code[idx] : null;
     const ws = Array.isArray(h.wind_speed_10m) ? h.wind_speed_10m[idx] : null;
     const wd = Array.isArray(h.wind_direction_10m) ? h.wind_direction_10m[idx] : null;
+    const tempMax = d && Array.isArray(d.temperature_2m_max) ? tempNumOrNull(d.temperature_2m_max[0]) : null;
+    const tempMin = d && Array.isArray(d.temperature_2m_min) ? tempNumOrNull(d.temperature_2m_min[0]) : null;
 
-    const weather = weatherCodeJa(wc);
+    const weatherBase = weatherCodeJa(wc);
+    const weather = weatherTextWithTemp(weatherBase, tempMin, tempMax);
     const dir = windDirJa(wd);
     const spd = Number(ws);
     const wind = (dir || Number.isFinite(spd))
@@ -1120,6 +1195,8 @@
     const out = {
       weather,
       wind,
+      temp_min_c: tempMin === null ? '' : tempMin.toFixed(1),
+      temp_max_c: tempMax === null ? '' : tempMax.toFixed(1),
       weather_source: base.includes('archive-api') ? 'open_meteo_archive' : 'open_meteo_forecast',
       weather_ms: Date.now()
     };
@@ -1131,19 +1208,29 @@
   async function fillWeatherForTrip(trip){
     try{
       if(!trip || typeof trip !== 'object') return false;
-      if(!isBlankValue(trip.weather) && !isBlankValue(trip.wind)) return false;
+      if(!tripNeedsWeatherAutoFill(trip)) return false;
 
       const w = await getWeatherForTrip(trip);
       let changed = false;
 
       if(w){
-        if(isBlankValue(trip.weather) && w.weather){
+        if((isWeatherPlaceholder(trip.weather) || !hasTempRangeText(trip.weather)) && w.weather){
           trip.weather = w.weather;
           changed = true;
         }
 
-        if(isBlankValue(trip.wind) && w.wind){
+        if(isWeatherPlaceholder(trip.wind) && w.wind){
           trip.wind = w.wind;
+          changed = true;
+        }
+
+        if(!isBlankValue(w.temp_min_c) && String(trip.temp_min_c || '') !== String(w.temp_min_c)){
+          trip.temp_min_c = String(w.temp_min_c);
+          changed = true;
+        }
+
+        if(!isBlankValue(w.temp_max_c) && String(trip.temp_max_c || '') !== String(w.temp_max_c)){
+          trip.temp_max_c = String(w.temp_max_c);
           changed = true;
         }
 
@@ -1153,17 +1240,18 @@
         }
       }
 
-      // 天気APIに届かない、または座標/日時の問題で値が取れない場合も空欄にしない。
-      if(isBlankValue(trip.weather)){
-        trip.weather = AUTO_FIELD_UNAVAILABLE;
-        trip.weather_source = trip.weather_source || 'open_meteo_unavailable';
+      // 通信失敗・APモード・一時的なAPI失敗を「取得不可」で固定しない。
+      // 「取得待ち」は後で通常通信時に再取得対象にする。
+      if(isWeatherPlaceholder(trip.weather) && isBlankValue(trip.weather)){
+        trip.weather = AUTO_FIELD_PENDING;
+        trip.weather_source = trip.weather_source || 'open_meteo_pending';
         trip.weather_auto_ms = trip.weather_auto_ms || Date.now();
         changed = true;
       }
 
-      if(isBlankValue(trip.wind)){
-        trip.wind = AUTO_FIELD_UNAVAILABLE;
-        trip.weather_source = trip.weather_source || 'open_meteo_unavailable';
+      if(isWeatherPlaceholder(trip.wind) && isBlankValue(trip.wind)){
+        trip.wind = AUTO_FIELD_PENDING;
+        trip.weather_source = trip.weather_source || 'open_meteo_pending';
         trip.weather_auto_ms = trip.weather_auto_ms || Date.now();
         changed = true;
       }
@@ -1174,14 +1262,16 @@
 
       let changed = false;
 
-      if(setIfBlank(trip, 'weather', AUTO_FIELD_UNAVAILABLE)){
-        trip.weather_source = trip.weather_source || 'open_meteo_error';
+      if(isBlankValue(trip.weather)){
+        trip.weather = AUTO_FIELD_PENDING;
+        trip.weather_source = trip.weather_source || 'open_meteo_pending';
         trip.weather_auto_ms = trip.weather_auto_ms || Date.now();
         changed = true;
       }
 
-      if(setIfBlank(trip, 'wind', AUTO_FIELD_UNAVAILABLE)){
-        trip.weather_source = trip.weather_source || 'open_meteo_error';
+      if(isBlankValue(trip.wind)){
+        trip.wind = AUTO_FIELD_PENDING;
+        trip.weather_source = trip.weather_source || 'open_meteo_pending';
         trip.weather_auto_ms = trip.weather_auto_ms || Date.now();
         changed = true;
       }
@@ -1525,7 +1615,7 @@
   setTimeout(repairBadLineSinkerPlaceholders, 5200);
 
   window.__wakasagiLakeAutofill = {
-    version: 'production-repair-all-history-fields-20260513',
+    version: 'production-weather-retry-coordinate-check-20260525b',
     fillLakeNameForTrip,
     fillAutoFieldsForTrip,
     fillWeatherForTrip,
