@@ -1,14 +1,11 @@
 // Wakasagi Companion offline GPS link service worker
-// Version: 2026-05-25 ap-shell-current-map
+// Version: 2026-05-25 weather-temp-display-d
 // 目的:
 // - GitHub Pages本体を事前キャッシュし、PicoW-Config接続中でもキャッシュ済みで起動できるようにする。
-// - 現在の index.html が読み込む Map 本体JS/CSSをキャッシュ対象に含める。
-// - 地図タイル/CDNが読めない環境でも、GPS取得→Pico W /log#maplink の自動連携を成立させる。
-// 注意:
-// - 初回または更新直後は、インターネット接続中にGitHub Pagesを一度開いて、このService Workerを更新する必要がある。
-// - 外部地図タイル/Leaflet CDNはオフラインでは保証しない。実釣中の本体連携では地図表示よりGPS連携を優先する。
+// - 現在の index.html が実際に読む Stage1/Stage2/lake_autofill をキャッシュ対象にする。
+// - lake_autofill.js の最低/最高気温対応版が古いキャッシュに潰されないよう、CACHE_NAMEを更新する。
 
-const CACHE_NAME = 'wakasagi-companion-shell-v20260525-ap-shell-current-map';
+const CACHE_NAME = 'wakasagi-companion-shell-v20260525-weather-temp-d';
 const APP_SHELL = [
   './',
   './index.html',
@@ -63,11 +60,10 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(req.url);
 
-  // GitHub Pages内のページ遷移はネットワーク優先。AP/オフラインで失敗した時だけキャッシュ済みindexを返す。
   if(req.mode === 'navigate' || req.destination === 'document'){
     event.respondWith((async()=>{
       try{
-        const fresh = await fetch(req);
+        const fresh = await fetch(req, {cache:'reload'});
         const cache = await caches.open(CACHE_NAME);
         try{ await cache.put('./index.html', fresh.clone()); }catch(e){}
         return fresh;
@@ -80,23 +76,19 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // 同一オリジンのMap本体JS/CSS/manifest/icon等はキャッシュ優先、裏で更新。
-  // index.html 側の ?v=... 付き読み込みにも ignoreSearch:true で対応する。
   if(url.origin === self.location.origin){
     event.respondWith((async()=>{
       const cache = await caches.open(CACHE_NAME);
       const cached = await cache.match(req, {ignoreSearch:true});
-      const fetchAndStore = fetch(req).then(res=>{
+      const fetchAndStore = fetch(req, {cache:'reload'}).then(res=>{
         if(res && (res.ok || res.type === 'opaque')){
           try{ cache.put(req, res.clone()); }catch(e){}
+          try{ cache.put(url.pathname.replace(/^\//,'./'), res.clone()); }catch(e){}
         }
         return res;
       }).catch(()=>null);
-      return cached || (await fetchAndStore) || Response.error();
+      return (await fetchAndStore) || cached || Response.error();
     })());
     return;
   }
-
-  // 外部Leaflet/CDN/地図タイルは通常ネットワークへ流す。
-  // AP/オフラインでは失敗しても、app_stage1側がGPS連携を継続する前提。
 });

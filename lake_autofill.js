@@ -18,7 +18,7 @@
 (function(){
   'use strict';
 
-  const INSTALL_FLAG = '__wakasagiLakeAutofillLogsync20260512LakeRepairInstalled';
+  const INSTALL_FLAG = '__wakasagiLakeAutofillWeatherTemp20260525dInstalled';
   const APPLY_WRAP_FLAG = '__wakasagiLakeAutofillLogsyncWrappedLakeRepair';
   const MAPLINK_WRAP_FLAG = '__wakasagiMaplinkHistoryCountsWrappedLakeRepair20260512';
   const FIND_FIX_FLAG = '__wakasagiLogsyncFindTripLakeRepair20260512';
@@ -1615,7 +1615,7 @@
   setTimeout(repairBadLineSinkerPlaceholders, 5200);
 
   window.__wakasagiLakeAutofill = {
-    version: 'production-weather-retry-coordinate-check-20260525b',
+    version: 'production-weather-temp-display-20260525d',
     fillLakeNameForTrip,
     fillAutoFieldsForTrip,
     fillWeatherForTrip,
