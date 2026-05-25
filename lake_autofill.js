@@ -1379,9 +1379,21 @@
 
       const trips = await getAll();
       const sid = sidOfPayload(p);
+      const visitKey = String((p && (p.gps_visit_id || p.visit_id)) || '').trim();
 
-      // 最重要:
-      // 同じsidの再同期だけ既存釣行回へ更新する。
+      // Stage2で分解されたA/B/C各地点の単独visitは gps_visit_id が主キー。
+      // ここでsid一致へ落とすと、B地点/C地点がA地点tripへ統合される。
+      // 既存gps_visit_idが見つからない場合は null を返し、新規trip作成へ進ませる。
+      if(visitKey){
+        const byVisit = trips.find(t =>
+          String(t.gps_visit_id || '') === visitKey ||
+          (t.pico_summary && String(t.pico_summary.gps_visit_id || '') === visitKey) ||
+          (Array.isArray(t.pico_logs) && t.pico_logs.some(l => String(l.gps_visit_id || '') === visitKey))
+        );
+        return byVisit || null;
+      }
+
+      // 通常の非Stage2 payloadだけ、同じsidの再同期を既存釣行回へ更新する。
       // map_spot_id は過去地点のIDであり、新規釣行回の保存先ではないため、ここでは絶対に一致検索に使わない。
       if(sid){
         const bySid = trips.find(t => tripHasSid(t, sid));
@@ -1615,7 +1627,7 @@
   setTimeout(repairBadLineSinkerPlaceholders, 5200);
 
   window.__wakasagiLakeAutofill = {
-    version: 'production-weather-temp-display-20260525d',
+    version: 'production-weather-temp-display-20260525f',
     fillLakeNameForTrip,
     fillAutoFieldsForTrip,
     fillWeatherForTrip,
