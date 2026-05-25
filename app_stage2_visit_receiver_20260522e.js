@@ -40,6 +40,7 @@
 
   async function stage2FindTripForLogSync(p){
     const visitKey = s(p && (p.gps_visit_id || p.visit_id));
+
     if(visitKey && typeof getAllTrips === 'function'){
       const trips = await getAllTrips();
       for(const t of trips){
@@ -47,7 +48,15 @@
         if(t.pico_summary && s(t.pico_summary.gps_visit_id) === visitKey) return t;
         if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => s(l.gps_visit_id) === visitKey)) return t;
       }
+
+      // 重要:
+      // Stage2で分解された単独visitは gps_visit_id が主キー。
+      // ここで旧Stage1の originalFind() へ落とすと、pointKeyなしpayloadが
+      // sid一致で既存tripを拾い、A/B/Cの複数visitが1件へ統合される。
+      // 既存gps_visit_idが無い場合は必ず新規trip作成へ進ませる。
+      return null;
     }
+
     if(originalFind) return await originalFind.call(this, p);
     return null;
   }
@@ -154,5 +163,5 @@
   try{ window.v112_makePicoSummary = stage2MakePicoSummary; v112_makePicoSummary = stage2MakePicoSummary; }catch(e){}
   try{ window.v112_applyLogSyncPayload = stage2ApplyLogSyncPayload; v112_applyLogSyncPayload = stage2ApplyLogSyncPayload; }catch(e){}
 
-  console.info('[wakasagi] stage2 visit receiver 20260522e installed');
+  console.info('[wakasagi] stage2 visit receiver 20260525e installed - gps_visit_id isolated');
 })();
