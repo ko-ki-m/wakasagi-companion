@@ -1,7 +1,7 @@
 (function(){
   'use strict';
 
-  const VERSION = 'gps_recorder_map_bridge_20260526c';
+  const VERSION = 'gps_recorder_map_bridge_20260526f';
   const DB_NAME = 'wakasagi_gps_recorder_v1';
   const DB_VER = 1;
   const STORE_CAND = 'gps_candidates';
@@ -82,6 +82,7 @@
       <div class="actions">
         <button id="gpsRecorderBridgeLoad" type="button">GPS候補を読み込み</button>
         <button id="gpsRecorderBridgeOpen" type="button">GPS候補記録ページを開く</button>
+        <button id="gpsRecorderBridgeClearSid" type="button">このsidのGPS候補を削除</button>
       </div>
       <p id="gpsRecorderBridgeStatus" class="muted">未読込</p>
       <div id="gpsRecorderBridgeList" class="list"></div>
@@ -150,12 +151,61 @@
     window.open(url, '_blank', 'noopener');
   }
 
+
+  function deleteRecorderCandidatesBySid(sidTarget){
+    return new Promise(async resolve=>{
+      const db = await openRecorderDb();
+      if(!db || !sidTarget){ resolve(0); return; }
+      let count = 0;
+      try{
+        const tx = db.transaction(STORE_CAND, 'readwrite');
+        const st = tx.objectStore(STORE_CAND);
+        const req = st.openCursor();
+        req.onsuccess = ev => {
+          const cur = ev.target.result;
+          if(!cur) return;
+          const r = cur.value || {};
+          if(s(r.sid) === s(sidTarget)){
+            cur.delete();
+            count++;
+          }
+          cur.continue();
+        };
+        tx.oncomplete = () => resolve(count);
+        tx.onerror = () => resolve(count);
+      }catch(e){
+        resolve(count);
+      }
+    });
+  }
+
+  async function clearCurrentSidRecorderCandidates(){
+    ensurePanel();
+    const sid = currentSidHint();
+    if(!sid){
+      setStatus('sidが分からないため削除できません。/logからMap連携後、またはsid付きURLで開いてください。');
+      setBadge('削除不可','warn');
+      return;
+    }
+    if(!confirm('GPS Recorder側のこのsidの候補だけを削除します。\\n\\nsid=' + sid + '\\n\\nMap保存済み履歴やPico W /log側DBは削除しません。')){
+      return;
+    }
+    setStatus('GPS Recorder候補を削除中...');
+    setBadge('削除中','warn');
+    const count = await deleteRecorderCandidatesBySid(sid);
+    setStatus('GPS Recorder候補を削除しました: ' + count + '件 / sid=' + sid);
+    setBadge('削除完了','good');
+    await loadAndRender();
+  }
+
   function init(){
     ensurePanel();
     const b1 = document.getElementById('gpsRecorderBridgeLoad');
     const b2 = document.getElementById('gpsRecorderBridgeOpen');
+    const b3 = document.getElementById('gpsRecorderBridgeClearSid');
     if(b1) b1.onclick = loadAndRender;
     if(b2) b2.onclick = openRecorder;
+    if(b3) b3.onclick = clearCurrentSidRecorderCandidates;
     setStatus('GPS Recorder候補DBをまだ読んでいません。');
     console.info('[wakasagi] gps recorder map bridge installed', VERSION);
   }

@@ -1,12 +1,12 @@
 // Wakasagi Companion offline GPS link service worker
-// Version: 2026-05-26 gps-recorder-map-read-c
+// Version: 2026-05-26 gps-recorder-delete-f
 // 目的:
 // - GitHub Pages本体を事前キャッシュし、PicoW-Config接続中でもキャッシュ済みで起動できるようにする。
 // - gps-recorder.html / gps-bridge.html を index.html にフォールバックさせない。
 // - GPS候補確認用 gps_recorder_map_bridge.js をキャッシュ対象にする。
 // - 本体 .ino / /log / リール制御には一切関与しない。
 
-const CACHE_NAME = 'wakasagi-companion-shell-v20260526-gps-recorder-visit-inject-e';
+const CACHE_NAME = 'wakasagi-companion-shell-v20260526-gps-recorder-delete-f';
 
 const APP_SHELL = [
   './',

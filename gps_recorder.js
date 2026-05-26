@@ -1,7 +1,7 @@
 (function(){
   'use strict';
 
-  const VERSION = 'gps_recorder_20260526b';
+  const VERSION = 'gps_recorder_20260526f';
   const DB_NAME = 'wakasagi_gps_recorder_v1';
   const DB_VER = 1;
   const STORE_CAND = 'gps_candidates';
@@ -17,6 +17,8 @@
   const btnStart = $('btnStart');
   const btnStop = $('btnStop');
   const btnOne = $('btnOne');
+  const btnClearSid = $('btnClearSid');
+  const btnClearAll = $('btnClearAll');
 
   const qs = new URLSearchParams(location.search);
   const sid = String(qs.get('sid') || localStorage.getItem('wakasagi_last_sid') || '').trim();
@@ -83,6 +85,96 @@
       req.onsuccess = ev => { const cur=ev.target.result; resolve(cur ? cur.value : latest); };
       req.onerror = () => resolve(null);
     });
+  }
+
+
+  function getAllCandidates(){
+    return new Promise(resolve=>{
+      const out = [];
+      if(!db){ resolve(out); return; }
+      try{
+        const tx = db.transaction(STORE_CAND,'readonly');
+        const st = tx.objectStore(STORE_CAND);
+        const req = st.getAll();
+        req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : out);
+        req.onerror = () => resolve(out);
+      }catch(e){
+        resolve(out);
+      }
+    });
+  }
+
+  function deleteCandidatesBySid(sidTarget){
+    return new Promise(resolve=>{
+      if(!db || !sidTarget){ resolve(0); return; }
+      let count = 0;
+      try{
+        const tx = db.transaction(STORE_CAND,'readwrite');
+        const st = tx.objectStore(STORE_CAND);
+        const req = st.openCursor();
+        req.onsuccess = ev => {
+          const cur = ev.target.result;
+          if(!cur) return;
+          const r = cur.value || {};
+          if(String(r.sid || '') === String(sidTarget)){
+            cur.delete();
+            count++;
+          }
+          cur.continue();
+        };
+        tx.oncomplete = () => resolve(count);
+        tx.onerror = () => resolve(count);
+      }catch(e){
+        resolve(count);
+      }
+    });
+  }
+
+  function deleteAllCandidates(){
+    return new Promise(resolve=>{
+      if(!db){ resolve(false); return; }
+      try{
+        const tx = db.transaction(STORE_CAND,'readwrite');
+        tx.objectStore(STORE_CAND).clear();
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      }catch(e){
+        resolve(false);
+      }
+    });
+  }
+
+  async function refreshDebugAfterDelete(note){
+    lastCandidate = await getLatestCandidate();
+    const all = await getAllCandidates();
+    dbg({ready:true, note:note || '', remaining_all:all.length, lastCandidate:lastCandidate});
+  }
+
+  async function clearCurrentSidCandidates(){
+    if(!db) db = await openDb();
+    if(!sid){
+      setStatus('sidなし。削除対象を特定できません。','bad');
+      dbg({error:'missing sid for delete'});
+      return;
+    }
+    if(!confirm('このsidのGPS候補だけを削除します。\\n\\nsid=' + sid + '\\n\\nMap保存済み履歴やPico W /log側DBは削除しません。')){
+      return;
+    }
+    stop();
+    const count = await deleteCandidatesBySid(sid);
+    setStatus('このsidのGPS候補を削除: ' + count + '件','good');
+    await refreshDebugAfterDelete('deleted current sid candidates');
+  }
+
+  async function clearAllCandidates(){
+    if(!db) db = await openDb();
+    if(!confirm('GPS Recorder側の全GPS候補を削除します。\\n\\nMap保存済み履歴やPico W /log側DBは削除しません。')){
+      return;
+    }
+    stop();
+    const ok = await deleteAllCandidates();
+    setStatus(ok ? '全GPS候補を削除しました' : '全GPS候補削除に失敗','good');
+    await refreshDebugAfterDelete('deleted all recorder candidates');
   }
 
   function getPosition(){
@@ -209,6 +301,8 @@
   btnStart.onclick = start;
   btnStop.onclick = stop;
   btnOne.onclick = ()=>sampleOnce('button');
+  if(btnClearSid) btnClearSid.onclick = clearCurrentSidCandidates;
+  if(btnClearAll) btnClearAll.onclick = clearAllCandidates;
 
   (async()=>{
     try{ db = await openDb(); lastCandidate = await getLatestCandidate(); }catch(e){ setStatus('DB初期化失敗','bad'); dbg({error:String(e&&e.message||e)}); return; }
