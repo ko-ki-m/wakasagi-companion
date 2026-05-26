@@ -1,14 +1,11 @@
-// Wakasagi Companion service worker
-// Version: 2026-05-26 safety-fix-m
+// Wakasagi Companion offline GPS link service worker
+// Version: 2026-05-26 gps-recorder-oneshot-k
 // 目的:
-// - Map本流に必要なファイルをキャッシュする。
+// - 現在のMap本体に必要なファイルをキャッシュする。
 // - gps-recorder.html / gps-bridge.html を index.html にフォールバックさせない。
-// - GPS Recorderは1回取得版のみをキャッシュする。
-// - gps_recorder_visit_inject.js はキャッシュ対象から外す。
+// - gps_recorder.js を「現在地を記録=1回取得」の修正版へ更新する。
 // - Pico W .ino / /log / リール制御には一切関与しない。
-
-const CACHE_NAME = 'wakasagi-companion-shell-v20260526-safety-fix-m';
-
+const CACHE_NAME = 'wakasagi-companion-shell-v20260526-gps-recorder-oneshot-k';
 const APP_SHELL = [
   './',
   './index.html',
@@ -19,19 +16,20 @@ const APP_SHELL = [
   './gps-bridge.html',
   './gps-recorder.html',
   './gps_recorder.js',
+  './gps_recorder_map_bridge.js',
+  './gps_recorder_logsync_preview.js',
+  './gps_recorder_visit_inject.js',
   './app.js',
   './manifest.webmanifest',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'
 ];
-
 function shellKeyForUrl(url){
   const path = url.pathname.replace(/^\/+/, '');
   if(path === '' || path === './') return './';
   return './' + path;
 }
-
 async function cacheAppShell(){
   const cache = await caches.open(CACHE_NAME);
   await Promise.all(APP_SHELL.map(async (url)=>{
@@ -43,21 +41,17 @@ async function cacheAppShell(){
     }catch(e){}
   }));
 }
-
 async function cachedByKey(key){
   const cache = await caches.open(CACHE_NAME);
   return (await cache.match(key, {ignoreSearch:true})) || null;
 }
-
 async function cachedIndex(){
   return (await cachedByKey('./index.html')) || (await cachedByKey('./'));
 }
-
 async function handleDocumentRequest(req){
   const url = new URL(req.url);
   const key = shellKeyForUrl(url);
   const isDedicatedDoc = key === './gps-recorder.html' || key === './gps-bridge.html';
-
   try{
     const fresh = await fetch(req, {cache:'reload'});
     if(fresh && (fresh.ok || fresh.type === 'opaque')){
@@ -83,14 +77,12 @@ async function handleDocumentRequest(req){
     throw e;
   }
 }
-
 self.addEventListener('install', event => {
   event.waitUntil((async()=>{
     await cacheAppShell();
     await self.skipWaiting();
   })());
 });
-
 self.addEventListener('activate', event => {
   event.waitUntil((async()=>{
     const keys = await caches.keys();
@@ -98,23 +90,18 @@ self.addEventListener('activate', event => {
     await self.clients.claim();
   })());
 });
-
 self.addEventListener('fetch', event => {
   const req = event.request;
   if(req.method !== 'GET') return;
-
   const url = new URL(req.url);
-
   if(req.mode === 'navigate' || req.destination === 'document'){
     event.respondWith(handleDocumentRequest(req));
     return;
   }
-
   if(url.origin === self.location.origin){
     event.respondWith((async()=>{
       const cache = await caches.open(CACHE_NAME);
       const key = shellKeyForUrl(url);
-
       const fresh = await fetch(req, {cache:'reload'}).then(async res=>{
         if(res && (res.ok || res.type === 'opaque')){
           try{ await cache.put(req, res.clone()); }catch(e){}
@@ -122,10 +109,10 @@ self.addEventListener('fetch', event => {
         }
         return res;
       }).catch(()=>null);
-
       const cached = await cache.match(req, {ignoreSearch:true});
       const cachedByPath = await cache.match(key, {ignoreSearch:true});
       return fresh || cached || cachedByPath || Response.error();
     })());
+    return;
   }
 });
