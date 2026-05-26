@@ -1,13 +1,12 @@
 // Wakasagi Companion offline GPS link service worker
-// Version: 2026-05-26 gps-recorder-route-fix-b
+// Version: 2026-05-26 gps-recorder-map-read-c
 // 目的:
 // - GitHub Pages本体を事前キャッシュし、PicoW-Config接続中でもキャッシュ済みで起動できるようにする。
-// - gps-recorder.html を index.html にフォールバックさせない。
-// - gps-bridge.html も専用HTMLとして扱う。
-// - 現在の index.html が実際に読む Stage1/Stage2/lake_autofill をキャッシュ対象にする。
+// - gps-recorder.html / gps-bridge.html を index.html にフォールバックさせない。
+// - GPS候補確認用 gps_recorder_map_bridge.js をキャッシュ対象にする。
 // - 本体 .ino / /log / リール制御には一切関与しない。
 
-const CACHE_NAME = 'wakasagi-companion-shell-v20260526-gps-recorder-route-b';
+const CACHE_NAME = 'wakasagi-companion-shell-v20260526-gps-recorder-map-read-c';
 
 const APP_SHELL = [
   './',
@@ -19,6 +18,7 @@ const APP_SHELL = [
   './gps-bridge.html',
   './gps-recorder.html',
   './gps_recorder.js',
+  './gps_recorder_map_bridge.js',
   './app.js',
   './manifest.webmanifest',
   './manifest.json',
@@ -37,9 +37,7 @@ async function cacheAppShell(){
   await Promise.all(APP_SHELL.map(async (url)=>{
     try{
       const res = await fetch(url, {cache:'reload'});
-      if(res && (res.ok || res.type === 'opaque')){
-        await cache.put(url, res.clone());
-      }
+      if(res && (res.ok || res.type === 'opaque')) await cache.put(url, res.clone());
     }catch(e){}
   }));
 }
@@ -56,13 +54,7 @@ async function cachedIndex(){
 async function handleDocumentRequest(req){
   const url = new URL(req.url);
   const key = shellKeyForUrl(url);
-
-  // 重要:
-  // gps-recorder.html / gps-bridge.html は専用ページ。
-  // ここで index.html にフォールバックすると「データを移行中」のMap画面が出続ける。
-  const isDedicatedDoc =
-    key === './gps-recorder.html' ||
-    key === './gps-bridge.html';
+  const isDedicatedDoc = key === './gps-recorder.html' || key === './gps-bridge.html';
 
   try{
     const fresh = await fetch(req, {cache:'reload'});
@@ -84,7 +76,6 @@ async function handleDocumentRequest(req){
         {headers:{'Content-Type':'text/html; charset=utf-8'}, status:503}
       );
     }
-
     const cached = await cachedIndex();
     if(cached) return cached;
     throw e;
@@ -92,10 +83,7 @@ async function handleDocumentRequest(req){
 }
 
 self.addEventListener('install', event => {
-  event.waitUntil((async()=>{
-    await cacheAppShell();
-    await self.skipWaiting();
-  })());
+  event.waitUntil((async()=>{ await cacheAppShell(); await self.skipWaiting(); })());
 });
 
 self.addEventListener('activate', event => {
@@ -109,7 +97,6 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const req = event.request;
   if(req.method !== 'GET') return;
-
   const url = new URL(req.url);
 
   if(req.mode === 'navigate' || req.destination === 'document'){
@@ -123,7 +110,6 @@ self.addEventListener('fetch', event => {
       const cached = await cache.match(req, {ignoreSearch:true});
       const key = shellKeyForUrl(url);
       const cachedByPath = await cache.match(key, {ignoreSearch:true});
-
       const fresh = await fetch(req, {cache:'reload'}).then(async res=>{
         if(res && (res.ok || res.type === 'opaque')){
           try{ await cache.put(req, res.clone()); }catch(e){}
@@ -131,7 +117,6 @@ self.addEventListener('fetch', event => {
         }
         return res;
       }).catch(()=>null);
-
       return fresh || cached || cachedByPath || Response.error();
     })());
     return;
