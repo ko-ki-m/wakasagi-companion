@@ -1,7 +1,7 @@
 (function(){
   'use strict';
 
-  const VERSION = 'gps_recorder_20260526a';
+  const VERSION = 'gps_recorder_20260526b';
   const DB_NAME = 'wakasagi_gps_recorder_v1';
   const DB_VER = 1;
   const STORE_CAND = 'gps_candidates';

@@ -27,14 +27,14 @@
     <p>リール本体へ通信せず、スマホ側IndexedDBにGPS候補だけを記録します。本体制御・/log同期・リモート操作には触れません。</p>
     <div id="status" class="status">待機中</div>
     <div class="row">
-      <button id="btnStart" type="button">記録開始</button>
-      <button id="btnOne" type="button" class="secondary">今すぐ1回記録</button>
+      <button id="btnStart" type="button">現在地を記録</button>
+      <button id="btnOne" type="button" class="secondary">現在地を再取得</button>
       <button id="btnStop" type="button" class="danger">停止</button>
     </div>
     <p class="muted">このページは次段階で /log から起動する候補です。現段階では既存Map・Pico W本体へは一切書き込みません。</p>
     <pre id="debug"></pre>
   </div>
 </main>
-<script src="./gps_recorder.js?v=20260526a" defer></script>
+<script src="./gps_recorder.js?v=20260526b" defer></script>
 </body>
 </html>
