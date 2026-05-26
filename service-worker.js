@@ -6,7 +6,7 @@
 // - GPS候補確認用 gps_recorder_map_bridge.js をキャッシュ対象にする。
 // - 本体 .ino / /log / リール制御には一切関与しない。
 
-const CACHE_NAME = 'wakasagi-companion-shell-v20260526-gps-recorder-logsync-preview-d';
+const CACHE_NAME = 'wakasagi-companion-shell-v20260526-gps-recorder-visit-inject-e';
 
 const APP_SHELL = [
   './',
@@ -20,6 +20,7 @@ const APP_SHELL = [
   './gps_recorder.js',
   './gps_recorder_map_bridge.js',
   './gps_recorder_logsync_preview.js',
+  './gps_recorder_visit_inject.js',
   './app.js',
   './manifest.webmanifest',
   './manifest.json',
