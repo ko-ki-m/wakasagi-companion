@@ -1,7 +1,7 @@
 (function(){
   'use strict';
 
-  const VERSION = 'gps_recorder_20260526k_oneshot_fix';
+  const VERSION = 'gps_recorder_20260526m_one_shot_safety';
   const DB_NAME = 'wakasagi_gps_recorder_v1';
   const DB_VER = 1;
   const STORE_CAND = 'gps_candidates';
@@ -21,10 +21,12 @@
   const qs = new URLSearchParams(location.search);
   const sid = String(qs.get('sid') || localStorage.getItem('wakasagi_last_sid') || '').trim();
   const pico = String(qs.get('pico') || '').trim();
+  const requestedAutostart = qs.get('autostart') === '1';
 
   let db = null;
   let lastCandidate = null;
   let sampleCount = 0;
+  let inFlight = false;
 
   function setStatus(text, cls){
     if(statusEl){
@@ -32,24 +34,22 @@
       statusEl.className = 'status ' + (cls || '');
     }
   }
-
   function dbg(obj){
-    if(debugEl){
-      debugEl.textContent = JSON.stringify(Object.assign({
-        version:VERSION,
-        sid:sid,
-        sampleCount:sampleCount,
-        behavior:'one_shot_only',
-        auto_timer:false,
-        autostart:false,
-        watchPosition:false
-      }, obj || {}), null, 2);
-    }
+    if(!debugEl) return;
+    debugEl.textContent = JSON.stringify(Object.assign({
+      version:VERSION,
+      sid,
+      running:false,
+      inFlight:inFlight,
+      sampleCount,
+      behavior:'one_shot_only',
+      auto_timer:false,
+      autostart:false,
+      watchPosition:false
+    }, obj || {}), null, 2);
   }
-
   function now(){ return Date.now(); }
   function toRad(v){ return Number(v) * Math.PI / 180; }
-
   function distM(lat1,lng1,lat2,lng2){
     const a1=Number(lat1), o1=Number(lng1), a2=Number(lat2), o2=Number(lng2);
     if(!Number.isFinite(a1)||!Number.isFinite(o1)||!Number.isFinite(a2)||!Number.isFinite(o2)) return null;
@@ -58,17 +58,10 @@
     const x=s1*s1+Math.cos(toRad(a1))*Math.cos(toRad(a2))*s2*s2;
     return 2*R*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
   }
-
-  function idFor(no){
-    return String(sid || 'nosid') + '_G' + String(no).padStart(4,'0');
-  }
+  function idFor(no){ return String(sid || 'nosid') + '_G' + String(no).padStart(4,'0'); }
 
   function openDb(){
     return new Promise((resolve,reject)=>{
-      if(!('indexedDB' in window)){
-        reject(new Error('IndexedDB unsupported'));
-        return;
-      }
       const req = indexedDB.open(DB_NAME, DB_VER);
       req.onupgradeneeded = ev => {
         const d = ev.target.result;
@@ -77,15 +70,12 @@
           st.createIndex('sid_start', ['sid','start_ms'], {unique:false});
           st.createIndex('sid_no', ['sid','candidate_no'], {unique:true});
         }
-        if(!d.objectStoreNames.contains(STORE_META)){
-          d.createObjectStore(STORE_META, {keyPath:'key'});
-        }
+        if(!d.objectStoreNames.contains(STORE_META)) d.createObjectStore(STORE_META, {keyPath:'key'});
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error || new Error('indexedDB open failed'));
     });
   }
-
   function put(store, rec){
     return new Promise(res=>{
       const tx = db.transaction(store,'readwrite');
@@ -94,10 +84,9 @@
       tx.onerror=()=>res(false);
     });
   }
-
   function getLatestCandidate(){
     return new Promise(resolve=>{
-      if(!sid || !db){ resolve(null); return; }
+      if(!sid){ resolve(null); return; }
       const tx = db.transaction(STORE_CAND,'readonly');
       const st = tx.objectStore(STORE_CAND);
       const idx = st.index('sid_start');
@@ -110,26 +99,27 @@
       req.onerror = () => resolve(null);
     });
   }
-
   function getAllCandidates(){
     return new Promise(resolve=>{
-      if(!db){ resolve([]); return; }
+      const out = [];
+      if(!db){ resolve(out); return; }
       try{
         const tx = db.transaction(STORE_CAND,'readonly');
-        const req = tx.objectStore(STORE_CAND).getAll();
-        req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
-        req.onerror = () => resolve([]);
-      }catch(e){ resolve([]); }
+        const st = tx.objectStore(STORE_CAND);
+        const req = st.getAll();
+        req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : out);
+        req.onerror = () => resolve(out);
+      }catch(e){ resolve(out); }
     });
   }
-
   function deleteCandidatesBySid(sidTarget){
     return new Promise(resolve=>{
       if(!db || !sidTarget){ resolve(0); return; }
       let count = 0;
       try{
         const tx = db.transaction(STORE_CAND,'readwrite');
-        const req = tx.objectStore(STORE_CAND).openCursor();
+        const st = tx.objectStore(STORE_CAND);
+        const req = st.openCursor();
         req.onsuccess = ev => {
           const cur = ev.target.result;
           if(!cur) return;
@@ -145,7 +135,6 @@
       }catch(e){ resolve(count); }
     });
   }
-
   function deleteAllCandidates(){
     return new Promise(resolve=>{
       if(!db){ resolve(false); return; }
@@ -157,13 +146,11 @@
       }catch(e){ resolve(false); }
     });
   }
-
   async function refreshDebugAfterDelete(note){
     lastCandidate = await getLatestCandidate();
     const all = await getAllCandidates();
     dbg({ready:true, note:note || '', remaining_all:all.length, lastCandidate:lastCandidate});
   }
-
   async function clearCurrentSidCandidates(){
     if(!db) db = await openDb();
     if(!sid){
@@ -171,24 +158,18 @@
       dbg({error:'missing sid for delete'});
       return;
     }
-    if(!confirm('このsidのGPS候補だけを削除します。\n\nsid=' + sid + '\n\nMap保存済み履歴やPico W /log側DBは削除しません。')){
-      return;
-    }
+    if(!confirm('このsidのGPS候補だけを削除します。\n\nsid=' + sid + '\n\nMap保存済み履歴やPico W /log側DBは削除しません。')) return;
     const count = await deleteCandidatesBySid(sid);
     setStatus('このsidのGPS候補を削除: ' + count + '件','good');
     await refreshDebugAfterDelete('deleted current sid candidates');
   }
-
   async function clearAllCandidates(){
     if(!db) db = await openDb();
-    if(!confirm('GPS Recorder側の全GPS候補を削除します。\n\nMap保存済み履歴やPico W /log側DBは削除しません。')){
-      return;
-    }
+    if(!confirm('GPS Recorder側の全GPS候補を削除します。\n\nMap保存済み履歴やPico W /log側DBは削除しません。')) return;
     const ok = await deleteAllCandidates();
     setStatus(ok ? '全GPS候補を削除しました' : '全GPS候補削除に失敗', ok ? 'good' : 'bad');
     await refreshDebugAfterDelete('deleted all recorder candidates');
   }
-
   function getPosition(){
     return new Promise((resolve,reject)=>{
       if(!('geolocation' in navigator)){
@@ -202,7 +183,6 @@
       });
     });
   }
-
   async function commitPosition(pos, source){
     const c = pos && pos.coords ? pos.coords : {};
     const lat = Number(c.latitude), lng = Number(c.longitude), acc = Number(c.accuracy || 0);
@@ -222,9 +202,7 @@
 
     const latest = lastCandidate || await getLatestCandidate();
     let d = null;
-    if(latest){
-      d = distM(latest.latest_lat || latest.lat, latest.latest_lng || latest.lng, lat, lng);
-    }
+    if(latest) d = distM(latest.latest_lat || latest.lat, latest.latest_lng || latest.lng, lat, lng);
 
     let rec;
     if(!latest || d === null || d >= MOVE_M){
@@ -249,7 +227,7 @@
         created_ms:now(),
         updated_ms:now()
       };
-      setStatus('GPS候補保存: G' + no,'good');
+      setStatus('GPS候補保存: G' + no + '（1回取得のみ）','good');
     }else{
       rec = Object.assign({}, latest);
       rec.end_ms = now();
@@ -263,12 +241,11 @@
         rec.best_acc_m = acc.toFixed(1);
         rec.acc_m = acc.toFixed(1);
       }
-      setStatus('GPS候補更新: G' + String(rec.candidate_no || ''),'good');
+      setStatus('GPS候補更新: G' + String(rec.candidate_no || '') + '（1回取得のみ）','good');
     }
 
     const ok = await put(STORE_CAND, rec);
     if(ok) lastCandidate = rec;
-
     dbg({
       saved:ok,
       candidate_no:rec.candidate_no,
@@ -276,39 +253,43 @@
       lng:lng.toFixed(7),
       acc_m:Number.isFinite(acc)?acc.toFixed(1):'',
       moved_from_prev_m:d!==null && Number.isFinite(d)?d.toFixed(1):'',
-      note:'このボタンは1回取得のみ。定期取得・autostart・watchPositionはありません。'
+      next_sample_sec:0,
+      note:'no timer; no scheduleNext; no autostart; no watchPosition'
     });
     return ok;
   }
-
   async function sampleOnce(source){
-    if(!db) db = await openDb();
-    if(!sid){
-      setStatus('sidなし。/logからsid付きで開く必要があります。','bad');
-      dbg({error:'missing sid'});
+    if(inFlight){
+      setStatus('GPS取得中です','warn');
+      dbg({ignored:'inFlight'});
       return false;
     }
-    setStatus('GPS取得中...','warn');
+    inFlight = true;
     try{
+      if(!db) db = await openDb();
+      if(!sid){
+        setStatus('sidなし。/logからsid付きで開く必要があります。','bad');
+        dbg({error:'missing sid'});
+        return false;
+      }
+      setStatus('GPS取得中...','warn');
       const pos = await getPosition();
-      return await commitPosition(pos, source || 'button_once');
+      return await commitPosition(pos, source || 'manual_one_shot');
     }catch(e){
       setStatus('GPS取得失敗','bad');
       dbg({error:String(e && e.message || e)});
       return false;
+    }finally{
+      inFlight = false;
     }
   }
-
   function stop(){
-    setStatus('自動取得はありません','warn');
-    dbg({stopped:true});
+    setStatus('停止中（タイマーなし）','warn');
+    dbg({stopped:true, note:'one-shot mode has no running timer'});
   }
 
-  // 重要:
-  // 旧版の start / scheduleNext / autostart は廃止。
-  // 既存HTML互換のためbtnStartを使うが、動作は1回取得だけ。
-  if(btnStart) btnStart.onclick = ()=>sampleOnce('button_once');
-  if(btnOne) btnOne.onclick = ()=>sampleOnce('button_once');
+  if(btnStart) btnStart.onclick = () => sampleOnce('button_record_one_shot');
+  if(btnOne) btnOne.onclick = () => sampleOnce('button_reacquire_one_shot');
   if(btnStop) btnStop.onclick = stop;
   if(btnClearSid) btnClearSid.onclick = clearCurrentSidCandidates;
   if(btnClearAll) btnClearAll.onclick = clearAllCandidates;
@@ -322,7 +303,10 @@
       dbg({error:String(e&&e.message||e)});
       return;
     }
-    setStatus('待機中。現在地を記録すると1回だけ取得します。','good');
     dbg({ready:true, lastCandidate:lastCandidate});
+    if(requestedAutostart){
+      setStatus('autostart指定は安全化のため無効です。現在地を記録で1回だけ取得します。','warn');
+      dbg({autostart_requested:true, autostart_disabled:true});
+    }
   })();
 })();

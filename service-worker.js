@@ -1,12 +1,13 @@
-// Wakasagi Companion offline GPS link service worker
-// Version: 2026-05-26 gps-recorder-oneshot-k
+// Wakasagi Companion service worker
+// Version: 2026-05-26 safety-fix-m
 // 目的:
-// - 現在のMap本体に必要なファイルをキャッシュする。
+// - Map本流に必要なファイルをキャッシュする。
 // - gps-recorder.html / gps-bridge.html を index.html にフォールバックさせない。
-// - gps_recorder.js を「現在地を記録=1回取得」の修正版へ更新する。
+// - GPS Recorderは1回取得版のみをキャッシュする。
+// - gps_recorder_visit_inject.js はキャッシュ対象から外す。
 // - Pico W .ino / /log / リール制御には一切関与しない。
 
-const CACHE_NAME = 'wakasagi-companion-shell-v20260526-gps-recorder-oneshot-k';
+const CACHE_NAME = 'wakasagi-companion-shell-v20260526-safety-fix-m';
 
 const APP_SHELL = [
   './',
@@ -18,9 +19,6 @@ const APP_SHELL = [
   './gps-bridge.html',
   './gps-recorder.html',
   './gps_recorder.js',
-  './gps_recorder_map_bridge.js',
-  './gps_recorder_logsync_preview.js',
-  './gps_recorder_visit_inject.js',
   './app.js',
   './manifest.webmanifest',
   './manifest.json',
@@ -76,11 +74,10 @@ async function handleDocumentRequest(req){
       const cachedDoc = await cachedByKey(key);
       if(cachedDoc) return cachedDoc;
       return new Response(
-        '<!doctype html><meta charset="utf-8"><title>Offline</title><body>このページはまだキャッシュされていません。通常通信で一度開いてください。</body>',
+        'Offline このページはまだキャッシュされていません。通常通信で一度開いてください。',
         {headers:{'Content-Type':'text/html; charset=utf-8'}, status:503}
       );
     }
-
     const cached = await cachedIndex();
     if(cached) return cached;
     throw e;
@@ -130,6 +127,5 @@ self.addEventListener('fetch', event => {
       const cachedByPath = await cache.match(key, {ignoreSearch:true});
       return fresh || cached || cachedByPath || Response.error();
     })());
-    return;
   }
 });
