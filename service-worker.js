@@ -1,12 +1,13 @@
 // Wakasagi Companion offline GPS link service worker
-// Version: 2026-05-25 stage2-visit-split-lake-f
+// Version: 2026-05-25 stage2-visit-split-gps-recorder-a
 // 目的:
 // - GitHub Pages本体を事前キャッシュし、PicoW-Config接続中でもキャッシュ済みで起動できるようにする。
 // - 現在の index.html が実際に読む Stage1/Stage2/lake_autofill をキャッシュ対象にする。
 // - lake_autofill.js の最低/最高気温対応版が古いキャッシュに潰されないよう、CACHE_NAMEを更新する。
-// - app_stage2_visit_receiver_20260522e.js のA/B/C分離保存修正版を確実に読み込ませる。
+// - app_stage2_visit_receiver_20260522e.js の分離保存修正版を確実に読み込ませる。
+// - gps-recorder.html / gps_recorder.js をAP中でも起動できるようにキャッシュする。
 
-const CACHE_NAME = 'wakasagi-companion-shell-v20260525-stage2-visit-split-lake-f';
+const CACHE_NAME = 'wakasagi-companion-shell-v20260525-stage2-visit-split-gps-recorder-a';
 const APP_SHELL = [
   './',
   './index.html',
@@ -15,6 +16,8 @@ const APP_SHELL = [
   './app_stage2_visit_receiver_20260522e.js',
   './lake_autofill.js',
   './gps-bridge.html',
+  './gps-recorder.html',
+  './gps_recorder.js',
   './app.js',
   './manifest.webmanifest',
   './manifest.json',
