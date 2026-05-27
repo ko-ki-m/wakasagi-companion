@@ -1,5 +1,5 @@
 // Wakasagi smartphone GPS candidate to Pico log matcher
-// Version: app_visit_matcher_from_candidates_20260526d
+// Version: app_visit_matcher_from_candidates_20260527b
 //
 // Scope:
 // - Smartphone/GitHub Pages side only.
@@ -9,8 +9,8 @@
 (function(){
   'use strict';
 
-  const VERSION = 'app_visit_matcher_from_candidates_20260526d';
-  const INSTALL_FLAG = '__wakasagiVisitMatcherFromCandidates20260526dInstalled';
+  const VERSION = 'app_visit_matcher_from_candidates_20260527b';
+  const INSTALL_FLAG = '__wakasagiVisitMatcherFromCandidates20260527bInstalled';
   if(window[INSTALL_FLAG]) return;
   window[INSTALL_FLAG] = true;
 
@@ -176,6 +176,81 @@
     return {candidates, visits};
   }
 
+
+
+  function fmtTime(ms){
+    const t = Number(ms || 0);
+    if(!Number.isFinite(t) || t <= 0) return '-';
+    try{
+      const d = new Date(t);
+      const hh = String(d.getHours()).padStart(2,'0');
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      const ss = String(d.getSeconds()).padStart(2,'0');
+      return hh + ':' + mm + ':' + ss;
+    }catch(e){ return '-'; }
+  }
+  function shortLatLng(v){
+    const x = Number(v);
+    return Number.isFinite(x) ? x.toFixed(6) : '-';
+  }
+  function ensureMatcherPanel(){
+    let box = document.getElementById('gpsVisitMatchPanel');
+    if(box) return box;
+    box = document.createElement('div');
+    box.id = 'gpsVisitMatchPanel';
+    box.className = 'card';
+    box.style.marginTop = '12px';
+    box.innerHTML = '<div class="cardHead"><div><h2>GPS候補 × 実釣ログ照合</h2><p>スマホ側GPS候補とPico W実釣ログの対応を表示します。GPSだけの候補は保存対象にしません。</p></div><span id="gpsVisitMatchBadge" class="pill">未確認</span></div><div id="gpsVisitMatchBody" class="emptyBox">/logsync後に表示します。</div>';
+    const anchor = document.querySelector('.logSyncCard') || document.getElementById('logSyncStatus') || document.querySelector('main') || document.body;
+    if(anchor && anchor.parentNode && anchor !== document.body){
+      anchor.parentNode.insertBefore(box, anchor.nextSibling);
+    }else{
+      document.body.appendChild(box);
+    }
+    return box;
+  }
+  function renderMatcherDiagnostics(payload, built, mode){
+    try{
+      const box = ensureMatcherPanel();
+      const badge = document.getElementById('gpsVisitMatchBadge');
+      const body = document.getElementById('gpsVisitMatchBody');
+      if(!body) return;
+      const sid = s(payload && payload.sid) || '-';
+      const rows = Array.isArray(payload && payload.tlog_activity_rows) ? payload.tlog_activity_rows : [];
+      const candidates = built && Array.isArray(built.candidates) ? built.candidates : [];
+      const visits = built && Array.isArray(built.visits) ? built.visits : [];
+      if(badge){
+        badge.textContent = candidates.length ? ('候補' + candidates.length + ' / 実釣' + visits.length) : '候補なし';
+      }
+      let html = '';
+      html += '<div style="font-size:16px;line-height:1.6">';
+      html += '<b>sid:</b> ' + sid + '<br>';
+      html += '<b>スマホGPS候補:</b> ' + candidates.length + '件 / <b>実釣visit候補:</b> ' + visits.length + '件 / <b>tlog活動行:</b> ' + rows.length + '行<br>';
+      html += '<b>判定:</b> ' + (mode || '-') + '<br>';
+      html += '</div>';
+      if(candidates.length){
+        html += '<div style="overflow:auto;margin-top:8px"><table style="width:100%;border-collapse:collapse;font-size:14px;min-width:760px">';
+        html += '<thead><tr><th style="text-align:left;border-bottom:1px solid #ccc">候補</th><th style="text-align:left;border-bottom:1px solid #ccc">座標</th><th style="text-align:left;border-bottom:1px solid #ccc">時刻</th><th style="text-align:left;border-bottom:1px solid #ccc">実釣判定</th><th style="text-align:left;border-bottom:1px solid #ccc">根拠</th></tr></thead><tbody>';
+        for(const c of candidates){
+          const v = visits.find(x => String(x.candidate_id || '') === String(c.candidate_id || '')) || null;
+          const lat = c.latest_lat ?? c.lat;
+          const lng = c.latest_lng ?? c.lng;
+          html += '<tr>';
+          html += '<td style="padding:6px;border-bottom:1px solid #eee">G' + String(c.candidate_no || '-') + '</td>';
+          html += '<td style="padding:6px;border-bottom:1px solid #eee">' + shortLatLng(lat) + ', ' + shortLatLng(lng) + '<br>±' + String(c.latest_acc_m ?? c.acc_m ?? '-') + 'm</td>';
+          html += '<td style="padding:6px;border-bottom:1px solid #eee">' + fmtTime(c.first_seen_ms || c.gps_ms || c.captured_at_ms) + '〜' + fmtTime(c.last_seen_ms || c.first_seen_ms) + '</td>';
+          html += '<td style="padding:6px;border-bottom:1px solid #eee">' + (v ? '保存対象' : '保存しない') + '</td>';
+          html += '<td style="padding:6px;border-bottom:1px solid #eee">' + (v ? ('motor=' + v.motor_count + ', pulse=' + v.pulse_count + ', event=' + v.fishing_event_count + ', depth=' + v.depth_range_mm + 'mm') : '実釣ログ一致なし') + '</td>';
+          html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+      }else{
+        html += '<div class="emptyBox" style="margin-top:8px">スマホ側GPS候補DBに、このsidの候補がありません。GPS候補だけではMap履歴へ保存しません。</div>';
+      }
+      body.innerHTML = html;
+    }catch(e){ try{ console.warn('[wakasagi] matcher diagnostics render failed', e); }catch(_e){} }
+  }
+
   const originalApply = (typeof window.v112_applyLogSyncPayload === 'function') ? window.v112_applyLogSyncPayload : null;
   if(!originalApply){
     try{ console.warn('[wakasagi] visit matcher not installed: v112_applyLogSyncPayload missing'); }catch(e){}
@@ -189,6 +264,7 @@
       }
       const built = await buildVisitsFromSmartphoneCandidates(payload);
       if(!built || !Array.isArray(built.candidates) || !built.candidates.length){
+        renderMatcherDiagnostics(payload, built, 'スマホGPS候補なし: 既存Stage2へそのまま渡す');
         return await originalApply.call(this, payload);
       }
 
@@ -210,9 +286,11 @@
         gps_visit_candidates:built.visits,
         smartphone_gps_matcher_version:VERSION
       });
+      renderMatcherDiagnostics(next, built, built.visits.length ? '実釣ログ一致候補だけStage2へ渡す' : 'GPS候補あり / 実釣一致0件: 保存しない');
       return await originalApply.call(this, next);
     }catch(e){
       try{ console.error('[wakasagi] visit matcher failed; fallback to original', e); }catch(_e){}
+      renderMatcherDiagnostics(payload, null, 'matcher失敗: 既存Stage2へフォールバック');
       return await originalApply.call(this, payload);
     }
   }
