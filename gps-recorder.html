@@ -4,60 +4,39 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#07111f">
-  <meta name="google" content="notranslate">
-  <meta name="format-detection" content="telephone=no">
-  <title>Wakasagi GPS候補記録 v20260527i</title>
+  <title>Wakasagi GPS Recorder</title>
   <style>
-    :root{color-scheme:dark;background:#07111f;color:#eaf2ff;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
-    body{margin:0;padding:16px;background:#07111f;color:#eaf2ff;}
-    main{max-width:720px;margin:0 auto;}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#07111f;color:#f8fafc;}
+    main{max-width:720px;margin:0 auto;padding:20px 16px;}
+    .card{background:#0f172a;border:1px solid rgba(255,255,255,.14);border-radius:18px;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.25);}
     h1{font-size:22px;margin:0 0 10px;}
-    .card{background:#0e1b2e;border:1px solid #24415f;border-radius:14px;padding:14px;margin:12px 0;box-shadow:0 8px 24px rgba(0,0,0,.22);}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
-    button{font-size:17px;border:0;border-radius:12px;padding:12px 14px;background:#2d7cff;color:white;font-weight:700;}
-    button.secondary{background:#20344f;}
-    button.danger{background:#b83232;}
-    button:disabled{opacity:.45;}
-    code,pre{background:#081320;border:1px solid #1e334b;border-radius:10px;padding:8px;white-space:pre-wrap;word-break:break-all;color:#d8ecff;}
-    .muted{opacity:.78;font-size:14px;line-height:1.55;}
-    .big{font-size:18px;font-weight:700;}
-    table{width:100%;border-collapse:collapse;font-size:14px;}
-    th,td{border-bottom:1px solid #20344f;padding:7px 4px;text-align:left;vertical-align:top;}
-    th{color:#a8c8ff;}
+    p{line-height:1.65;color:#cbd5e1;}
+    .status{font-size:17px;font-weight:700;margin:12px 0;color:#fff;}
+    .row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;}
+    button{font-size:16px;font-weight:700;border:0;border-radius:14px;padding:12px 14px;background:#38bdf8;color:#00111c;flex:1;min-width:160px;}
+    button.secondary{background:#334155;color:#f8fafc;}
+    button.danger{background:#fb7185;color:#19040a;}
+    pre{white-space:pre-wrap;word-break:break-word;background:#020617;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px;color:#dbeafe;max-height:330px;overflow:auto;}
+    .warn{color:#fbbf24}.good{color:#86efac}.bad{color:#fb7185}.muted{color:#94a3b8;font-size:13px;}
   </style>
 </head>
 <body>
 <main>
-  <h1>GPS候補記録</h1>
   <div class="card">
-    <div class="big">これは候補だけを保存します。Map履歴には直接保存しません。</div>
-    <p class="muted">GPSだけではvisit化しません。実釣ログとの照合で裏付けがある候補だけが後でMap保存対象になります。Pico W本体・/log同期・リール制御へ通信しません。</p>
-  </div>
-  <div class="card">
-    <div>sid: <code id="sidText">-</code></div>
-    <div>状態: <span id="stateText">初期化中</span></div>
-    <div>最終取得: <span id="lastText">-</span></div>
-    <div>候補数: <span id="countText">0</span></div>
-    <div class="row" style="margin-top:12px;">
-      <button id="startBtn">候補記録開始</button>
-      <button id="onceBtn" class="secondary">今すぐ1回取得</button>
-      <button id="stopBtn" class="secondary">停止</button>
+    <h1>Wakasagi GPS Recorder</h1>
+    <p>リール本体へ通信せず、スマホ側IndexedDBにGPS候補だけを記録します。本体制御・/log同期・リモート操作には触れません。</p>
+    <div id="status" class="status">待機中</div>
+    <div class="row">
+      <button id="btnStart" type="button">現在地を記録</button>
+      <button id="btnOne" type="button" class="secondary">現在地を再取得</button>
+      <button id="btnStop" type="button" class="danger">停止</button>
+      <button id="btnClearSid" type="button" class="danger">このsidのGPS候補を削除</button>
+      <button id="btnClearAll" type="button" class="danger">全GPS候補を削除</button>
     </div>
-    <div class="row" style="margin-top:10px;">
-      <button id="clearSidBtn" class="danger">このsidの候補を削除</button>
-      <button id="clearAllBtn" class="danger">全GPS候補を削除</button>
-    </div>
-  </div>
-  <div class="card">
-    <div class="big">debug</div>
-    <pre id="debugText">-</pre>
-  </div>
-  <div class="card">
-    <div class="big">候補一覧</div>
-    <div id="listBox" class="muted">未取得</div>
+    <p class="muted">このページは次段階で /log から起動する候補です。現段階では既存Map・Pico W本体へは一切書き込みません。</p>
+    <pre id="debug"></pre>
   </div>
 </main>
-<script src="./gps_session_candidates_core.js?v=20260527i" defer></script>
-<script src="./gps_recorder.js?v=20260527i" defer></script>
+<script src="./gps_recorder.js?v=20260526f" defer></script>
 </body>
 </html>
