@@ -1,5 +1,5 @@
 // Wakasagi GPS candidate recorder page runner
-// Version: gps_recorder_20260526d_candidate_only_runner
+// Version: gps_recorder_20260527i_5min_candidate_runner
 // Scope:
 // - Smartphone/GitHub Pages side only.
 // - Uses gps_session_candidates_core.js to save GPS candidates only.
@@ -8,8 +8,8 @@
 (function(){
   'use strict';
 
-  const VERSION = 'gps_recorder_20260526d_candidate_only_runner';
-  const SAMPLE_INTERVAL_MS = 180000; // low frequency, candidate only
+  const VERSION = 'gps_recorder_20260527i_5min_candidate_runner';
+  const SAMPLE_INTERVAL_MS = 300000; // 5 minutes, low-frequency candidate only
   let timer = null;
   let running = false;
   let sampleBusy = false;
@@ -29,6 +29,7 @@
       sid,
       running,
       sample_interval_ms: SAMPLE_INTERVAL_MS,
+      sampling_policy: 'five_min_one_shot_when_runner_is_alive',
       automatic_start_default: false,
       autostart_url_supported: true,
       watchPosition: false,
@@ -82,7 +83,7 @@
     sampleBusy=true;
     setState('GPS取得中...');
     try{
-      const res = await c.sampleOnce(sid, reason || 'manual_once', {enableHighAccuracy:true, timeout:15000, maximumAge:15000});
+      const res = await c.sampleOnce(sid, reason || 'manual_once', {enableHighAccuracy:false, timeout:8000, maximumAge:120000});
       if(res && res.ok){
         const cand = res.candidate || {};
         setLast('G' + String(cand.candidate_no || '') + ' ' + String(res.action || '') + ' ' + fmtTime(Date.now()));
@@ -133,9 +134,9 @@
     if(clearSidBtn) clearSidBtn.onclick=()=>clearSid();
     if(clearAllBtn) clearAllBtn.onclick=()=>clearAll();
     document.addEventListener('visibilitychange',()=>{
-      // Do not sample while hidden. Avoid unexpected background behavior and battery drain.
-      if(document.hidden){ clearTimer(); }
-      else if(running){ scheduleNext(); }
+      // Keep the low-frequency runner state. Browsers may throttle background timers;
+      // this page never uses watchPosition and only attempts one-shot samples every 5 minutes.
+      if(running && !timer) scheduleNext();
       debug();
     });
   }

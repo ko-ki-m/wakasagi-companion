@@ -1,5 +1,5 @@
 // Wakasagi smartphone-side GPS candidate core
-// Version: gps_session_candidates_core_20260526d
+// Version: gps_session_candidates_core_20260527i
 //
 // Scope:
 // - Smartphone/GitHub Pages side only.
@@ -10,7 +10,7 @@
 (function(){
   'use strict';
 
-  const VERSION = 'gps_session_candidates_core_20260526d';
+  const VERSION = 'gps_session_candidates_core_20260527i';
   const DB_NAME = 'wakasagi_gps_candidates_v2';
   const DB_VER = 1;
   const STORE = 'gps_candidates';
@@ -115,7 +115,7 @@
   }
   function oneShotPosition(options){
     if(!secureGeoAvailable()) return Promise.reject(new Error('secure geolocation unavailable'));
-    const opt = Object.assign({enableHighAccuracy:true, timeout:15000, maximumAge:15000}, options || {});
+    const opt = Object.assign({enableHighAccuracy:false, timeout:8000, maximumAge:120000}, options || {});
     return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve, reject, opt));
   }
   async function saveFix(sid, fix, reason){
@@ -138,6 +138,7 @@
         latest_acc_m:fix.acc_m,
         last_seen_ms:t,
         updated_ms:t,
+        last_phone_epoch_ms:t,
         sample_count:Number(last.sample_count||1)+1,
         last_reason:reason,
         last_distance_m:Math.round(distance*10)/10,
@@ -164,9 +165,11 @@
       latest_lng:fix.lng,
       latest_acc_m:fix.acc_m,
       gps_ms:fix.gps_ms,
+      phone_epoch_ms:t,
       first_seen_ms:t,
       last_seen_ms:t,
       updated_ms:t,
+      last_phone_epoch_ms:t,
       sample_count:1,
       reason,
       source:'smartphone_gps_core',
@@ -207,6 +210,7 @@
       secure_context:!!window.isSecureContext,
       geolocation_available:secureGeoAvailable(),
       automatic_sampling:false,
+      default_sampling:'one_shot_low_load_5min_runner_uses_recorder',
       timer:false,
       watchPosition:false,
       writes_map_history:false,
