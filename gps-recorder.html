@@ -2,41 +2,37 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#07111f">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
   <title>Wakasagi GPS Recorder</title>
   <style>
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#07111f;color:#f8fafc;}
-    main{max-width:720px;margin:0 auto;padding:20px 16px;}
-    .card{background:#0f172a;border:1px solid rgba(255,255,255,.14);border-radius:18px;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.25);}
-    h1{font-size:22px;margin:0 0 10px;}
-    p{line-height:1.65;color:#cbd5e1;}
-    .status{font-size:17px;font-weight:700;margin:12px 0;color:#fff;}
-    .row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;}
-    button{font-size:16px;font-weight:700;border:0;border-radius:14px;padding:12px 14px;background:#38bdf8;color:#00111c;flex:1;min-width:160px;}
-    button.secondary{background:#334155;color:#f8fafc;}
-    button.danger{background:#fb7185;color:#19040a;}
-    pre{white-space:pre-wrap;word-break:break-word;background:#020617;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px;color:#dbeafe;max-height:330px;overflow:auto;}
-    .warn{color:#fbbf24}.good{color:#86efac}.bad{color:#fb7185}.muted{color:#94a3b8;font-size:13px;}
+    body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;margin:14px;line-height:1.55;background:#0f172a;color:#e5e7eb;}
+    h1{font-size:20px;margin:0 0 10px;}
+    .card{border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:12px;margin:10px 0;background:rgba(255,255,255,.06);}
+    .status{font-weight:700;margin:8px 0;color:#93c5fd;}
+    .good{color:#86efac}.warn{color:#fde68a}.bad{color:#fca5a5}
+    button{font-size:16px;padding:10px 12px;margin:5px 4px 5px 0;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:#1e293b;color:#fff;}
+    pre{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.28);padding:10px;border-radius:10px;font-size:12px;}
+    .small{font-size:13px;opacity:.85;}
   </style>
 </head>
 <body>
-<main>
+  <h1>Wakasagi GPS Recorder</h1>
   <div class="card">
-    <h1>Wakasagi GPS Recorder</h1>
-    <p>リール本体へ通信せず、スマホ側IndexedDBにGPS候補だけを記録します。本体制御・/log同期・リモート操作には触れません。</p>
-    <div id="status" class="status">待機中</div>
-    <div class="row">
-      <button id="btnStart" type="button">現在地を記録</button>
-      <button id="btnOne" type="button" class="secondary">現在地を再取得</button>
-      <button id="btnStop" type="button" class="danger">停止</button>
-      <button id="btnClearSid" type="button" class="danger">このsidのGPS候補を削除</button>
-      <button id="btnClearAll" type="button" class="danger">全GPS候補を削除</button>
+    <div class="small">
+      このページはスマホ側HTTPSでGPS候補だけを取得・保存します。Pico W本体、/log同期、リール制御、Map履歴には直接書き込みません。
     </div>
-    <p class="muted">このページは次段階で /log から起動する候補です。現段階では既存Map・Pico W本体へは一切書き込みません。</p>
-    <pre id="debug"></pre>
+    <div id="status" class="status">待機中</div>
+    <button id="btnStart">現在地を記録</button>
+    <button id="btnOne">現在地を再取得</button>
+    <button id="btnStop">停止</button>
+    <button id="btnClearSid">このsidのGPS候補を削除</button>
+    <button id="btnClearAll">全GPS候補を削除</button>
   </div>
-</main>
-<script src="./gps_recorder.js?v=20260526f" defer></script>
+  <div class="card small">
+    <b>待機モード</b><br>
+    釣行ログ入口から別ウィンドウで開かれた場合、/log側からのGPS要求を待ち受けます。要求が来た時だけGPSを1回取得します。
+  </div>
+  <pre id="debug">{}</pre>
+  <script src="./gps_recorder.js?v=20260527k" defer></script>
 </body>
 </html>
