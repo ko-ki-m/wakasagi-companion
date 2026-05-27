@@ -1,5 +1,5 @@
 // Wakasagi smartphone-side GPS candidate core
-// Version: gps_session_candidates_core_20260526c
+// Version: gps_session_candidates_core_20260526d
 //
 // Scope:
 // - Smartphone/GitHub Pages side only.
@@ -10,7 +10,7 @@
 (function(){
   'use strict';
 
-  const VERSION = 'gps_session_candidates_core_20260526c';
+  const VERSION = 'gps_session_candidates_core_20260526d';
   const DB_NAME = 'wakasagi_gps_candidates_v2';
   const DB_VER = 1;
   const STORE = 'gps_candidates';

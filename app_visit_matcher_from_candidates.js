@@ -1,5 +1,5 @@
 // Wakasagi smartphone GPS candidate to Pico log matcher
-// Version: app_visit_matcher_from_candidates_20260526c
+// Version: app_visit_matcher_from_candidates_20260526d
 //
 // Scope:
 // - Smartphone/GitHub Pages side only.
@@ -9,8 +9,8 @@
 (function(){
   'use strict';
 
-  const VERSION = 'app_visit_matcher_from_candidates_20260526c';
-  const INSTALL_FLAG = '__wakasagiVisitMatcherFromCandidates20260526cInstalled';
+  const VERSION = 'app_visit_matcher_from_candidates_20260526d';
+  const INSTALL_FLAG = '__wakasagiVisitMatcherFromCandidates20260526dInstalled';
   if(window[INSTALL_FLAG]) return;
   window[INSTALL_FLAG] = true;
 
@@ -187,14 +187,21 @@
       if(!payload || payload.__error || payload.__stage2_single_visit){
         return await originalApply.call(this, payload);
       }
-      const alreadyJudged = payload.gps_visit_judged && Array.isArray(payload.gps_visit_candidates);
-      if(alreadyJudged){
-        return await originalApply.call(this, payload);
-      }
       const built = await buildVisitsFromSmartphoneCandidates(payload);
-      if(!built){
+      if(!built || !Array.isArray(built.candidates) || !built.candidates.length){
         return await originalApply.call(this, payload);
       }
+
+      /*
+        If smartphone-side candidates exist, use their judged visits as the authoritative
+        split for this payload. This avoids a single old /log GPS candidate covering
+        an entire fishing session and preventing later smartphone candidates from
+        separating actual points.
+
+        This still does not save GPS-only points: built.visits contains only candidates
+        that have matching tlog activity rows. If it is empty, Stage2 receives an empty
+        gps_visit_candidates array and will not create map visits from GPS alone.
+      */
       const next = Object.assign({}, payload, {
         gps_candidate_count:Number(built.candidates.length || 0),
         gps_candidates:built.candidates,
