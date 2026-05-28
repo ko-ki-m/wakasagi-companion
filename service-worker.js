@@ -1,11 +1,11 @@
 // Wakasagi Companion offline GPS link service worker
-// Version: 2026-05-28 gps-recorder-request-runner-l
+// Version: 2026-05-28 gps-bridge-m
 // 目的:
 // - 現在のMap本体に必要なファイルをキャッシュする。
 // - gps-recorder.html / gps-bridge.html を index.html にフォールバックさせない。
-// - gps_recorder.js を「/log要求待機 + named log window対応」の修正版へ更新する。
+// - gps-bridge.html の実装更新を確実に反映させる。
 // - Pico W .ino / /log / リール制御には一切関与しない。
-const CACHE_NAME = 'wakasagi-companion-shell-v20260528-gps-recorder-request-runner-l';
+const CACHE_NAME = 'wakasagi-companion-shell-v20260528-gps-bridge-m';
 const APP_SHELL = [
   './',
   './index.html',
@@ -64,10 +64,7 @@ async function handleDocumentRequest(req){
     if(isDedicatedDoc){
       const cachedDoc = await cachedByKey(key);
       if(cachedDoc) return cachedDoc;
-      return new Response('Offline このページはまだキャッシュされていません。通常通信で一度開いてください。', {
-        headers:{'Content-Type':'text/html; charset=utf-8'},
-        status:503
-      });
+      return new Response('Offline このページはまだキャッシュされていません。通常通信で一度開いてください。', { headers:{'Content-Type':'text/html; charset=utf-8'}, status:503 });
     }
     const cached = await cachedIndex();
     if(cached) return cached;
