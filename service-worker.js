@@ -1,11 +1,13 @@
 // Wakasagi Companion offline GPS link service worker
-// Version: 2026-05-29 gps-bridge-p-one-digit
+// Version: 2026-05-30 gps-bridge-r-watch20s
 // 目的:
 // - 現在のMap本体に必要なファイルをキャッシュする。
 // - gps-recorder.html / gps-bridge.html を index.html にフォールバックさせない。
-// - gps-bridge.html の一桁精度優先版を確実に反映させる。
+// - gps-bridge.html の20秒固定watchPosition版を確実に反映させる。
 // - Pico W .ino / /log / リール制御には一切関与しない。
-const CACHE_NAME = 'wakasagi-companion-shell-v20260529-gps-bridge-p-one-digit';
+
+const CACHE_NAME = 'wakasagi-companion-shell-v20260530-gps-bridge-r-watch20s';
+
 const APP_SHELL = [
   './',
   './index.html',
@@ -22,11 +24,13 @@ const APP_SHELL = [
   './icon-192.png',
   './icon-512.png'
 ];
+
 function shellKeyForUrl(url){
   const path = url.pathname.replace(/^\/+/, '');
   if(path === '' || path === './') return './';
   return './' + path;
 }
+
 async function cacheAppShell(){
   const cache = await caches.open(CACHE_NAME);
   await Promise.all(APP_SHELL.map(async (url)=>{
@@ -38,17 +42,21 @@ async function cacheAppShell(){
     }catch(e){}
   }));
 }
+
 async function cachedByKey(key){
   const cache = await caches.open(CACHE_NAME);
   return (await cache.match(key, {ignoreSearch:true})) || null;
 }
+
 async function cachedIndex(){
   return (await cachedByKey('./index.html')) || (await cachedByKey('./'));
 }
+
 async function handleDocumentRequest(req){
   const url = new URL(req.url);
   const key = shellKeyForUrl(url);
   const isDedicatedDoc = key === './gps-recorder.html' || key === './gps-bridge.html';
+
   try{
     const fresh = await fetch(req, {cache:'reload'});
     if(fresh && (fresh.ok || fresh.type === 'opaque')){
@@ -64,19 +72,24 @@ async function handleDocumentRequest(req){
     if(isDedicatedDoc){
       const cachedDoc = await cachedByKey(key);
       if(cachedDoc) return cachedDoc;
-      return new Response('Offline このページはまだキャッシュされていません。通常通信で一度開いてください。', { headers:{'Content-Type':'text/html; charset=utf-8'}, status:503 });
+      return new Response('Offline このページはまだキャッシュされていません。通常通信で一度開いてください。', {
+        headers:{'Content-Type':'text/html; charset=utf-8'},
+        status:503
+      });
     }
     const cached = await cachedIndex();
     if(cached) return cached;
     throw e;
   }
 }
+
 self.addEventListener('install', event => {
   event.waitUntil((async()=>{
     await cacheAppShell();
     await self.skipWaiting();
   })());
 });
+
 self.addEventListener('activate', event => {
   event.waitUntil((async()=>{
     const keys = await caches.keys();
@@ -84,14 +97,18 @@ self.addEventListener('activate', event => {
     await self.clients.claim();
   })());
 });
+
 self.addEventListener('fetch', event => {
   const req = event.request;
   if(req.method !== 'GET') return;
+
   const url = new URL(req.url);
+
   if(req.mode === 'navigate' || req.destination === 'document'){
     event.respondWith(handleDocumentRequest(req));
     return;
   }
+
   if(url.origin === self.location.origin){
     event.respondWith((async()=>{
       const cache = await caches.open(CACHE_NAME);
