@@ -11,34 +11,49 @@
     h1{font-size:20px;margin:0 0 10px;}
     #status{font-size:16px;font-weight:700;line-height:1.6;}
     #detail{font-size:13px;line-height:1.7;margin-top:8px;color:#444;white-space:pre-line;}
-    button{font-size:16px;padding:12px 14px;border-radius:10px;border:1px solid #bbb;background:#fff;margin-top:14px;}
+    #best{font-size:15px;line-height:1.7;margin-top:10px;padding:10px;border-radius:10px;background:#f3f6ff;border:1px solid #d9e2ff;white-space:pre-line;}
+    .warn{background:#fff7e6!important;border-color:#ffd48a!important;}
+    button{font-size:16px;padding:12px 14px;border-radius:10px;border:1px solid #bbb;background:#fff;margin-top:14px;margin-right:8px;}
   </style>
 </head>
 <body>
 <main>
   <div class="card">
-    <h1>GPS取得中</h1>
-    <div id="status">スマホの現在地を1回だけ取得しています。</div>
-    <div id="detail">取得後、自動でPico Wのログページへ戻ります。</div>
+    <h1>GPS高精度取得中</h1>
+    <div id="status">一桁精度になるまで測位しています。</div>
+    <div id="detail">10m以上の別ポイント判定に使うため、acc 9.9m以下になるまでログページへ戻りません。</div>
+    <div id="best">最良精度: まだ取得していません</div>
     <button id="retry" type="button" style="display:none;">もう一度取得</button>
-    <button id="back" type="button" style="display:none;">ログページへ戻る</button>
+    <button id="back" type="button" style="display:none;">ログへ戻る（保存しない）</button>
   </div>
 </main>
 <script>
 (function(){
   'use strict';
 
-  const VERSION = 'gps-bridge-20260529n-precision3';
-  const TARGET_ACC_M = 10.0;
-  const MAX_ATTEMPTS = 3;
-  const POSITION_TIMEOUT_MS = 15000;
-  const RETRY_DELAY_MS = 800;
+  const VERSION = 'gps-bridge-20260529q-wait-one-digit';
+
+  // 10m別ポイント判定に使うGPSなので、一桁精度以外は返さない。
+  const TARGET_ACC_M = 8.0;
+  const ACCEPT_ACC_M = 9.9;
+
+  // getCurrentPositionは測位収束を保証しないため、Bridge前面中だけ粘る。
+  // watchPosition / 定期取得 / 常時取得は使わない。
+  const POSITION_TIMEOUT_MS = 30000;
+  const RETRY_DELAY_MS = 2000;
+  const FIRST_STATUS_AFTER_MS = 30000;
 
   const $ = (id)=>document.getElementById(id);
   const statusEl = $('status');
   const detailEl = $('detail');
+  const bestEl = $('best');
   const retryBtn = $('retry');
   const backBtn = $('back');
+
+  let cancelled = false;
+  let attempt = 0;
+  let best = null;
+  let startedMs = Date.now();
 
   function qs(name){
     try{ return new URL(location.href).searchParams.get(name) || ''; }
@@ -48,6 +63,24 @@
   function setStatus(s,d){
     if(statusEl) statusEl.textContent = s || '';
     if(detailEl) detailEl.textContent = d || '';
+  }
+
+  function setBest(p, extra){
+    if(!bestEl) return;
+    if(!p){
+      bestEl.textContent = '最良精度: まだ取得していません';
+      return;
+    }
+    const elapsed = Math.round((Date.now() - startedMs) / 1000);
+    bestEl.textContent =
+      '最良精度: acc=' + Number(p.acc).toFixed(1) + 'm' +
+      '\n緯度: ' + Number(p.lat).toFixed(7) +
+      '\n経度: ' + Number(p.lng).toFixed(7) +
+      '\n試行: ' + String(p.attempt || attempt) + '回' +
+      '\n経過: ' + elapsed + '秒' +
+      (extra ? '\n' + extra : '');
+    if(p.acc > ACCEPT_ACC_M) bestEl.classList.add('warn');
+    else bestEl.classList.remove('warn');
   }
 
   function sleep(ms){
@@ -109,14 +142,9 @@
     location.href = returnUrl.split('#')[0] + '#gpsbridge=' + encodeURIComponent(b64Json(p));
   }
 
-  function showReturnOnly(msg, detail){
-    setStatus(msg || 'GPS取得に失敗しました', detail || 'ログページへ戻ります。');
-    if(backBtn){
-      backBtn.style.display = '';
-      backBtn.onclick = function(){
-        returnToLog({ ok:false, error:'manual_return', error_message: msg || '' });
-      };
-    }
+  function showControls(){
+    if(retryBtn) retryBtn.style.display = '';
+    if(backBtn) backBtn.style.display = '';
   }
 
   function posToPlain(pos){
@@ -130,7 +158,7 @@
   }
 
   function validPlain(p){
-    return !!p && Number.isFinite(p.lat) && Number.isFinite(p.lng);
+    return !!p && Number.isFinite(p.lat) && Number.isFinite(p.lng) && Number.isFinite(p.acc) && p.acc > 0;
   }
 
   function getPositionOnce(){
@@ -143,79 +171,102 @@
     });
   }
 
-  async function getBestPosition(){
-    let best = null;
+  async function acquireUntilOneDigit(){
     let lastError = null;
 
-    for(let attempt=1; attempt<=MAX_ATTEMPTS; attempt++){
-      setStatus('GPS取得中', '高精度位置を取得しています。\n試行 ' + attempt + ' / ' + MAX_ATTEMPTS);
+    while(!cancelled){
+      attempt++;
+      const elapsed = Math.round((Date.now() - startedMs) / 1000);
+      setStatus(
+        'GPS高精度取得中',
+        'acc ' + ACCEPT_ACC_M + 'm以下になるまでログページへ戻りません。\n試行 ' + attempt + '回目 / 経過 ' + elapsed + '秒'
+      );
+
       try{
         const pos = await getPositionOnce();
-        const p = posToPlain(pos);
+        const p = Object.assign({attempt:attempt}, posToPlain(pos));
         if(validPlain(p)){
-          if(!best || !Number.isFinite(best.acc) || (Number.isFinite(p.acc) && p.acc < best.acc)){
-            best = Object.assign({attempt:attempt}, p);
+          if(!best || p.acc < best.acc){
+            best = p;
           }
-          const accText = Number.isFinite(p.acc) ? p.acc.toFixed(1) : '-';
-          setStatus('GPS取得中', '試行 ' + attempt + ' / ' + MAX_ATTEMPTS + '\n精度 acc=' + accText + 'm');
-          if(Number.isFinite(p.acc) && p.acc <= TARGET_ACC_M){
-            return {best:best, attempts:attempt, target_met:true, last_error:null};
+          setBest(best, '今回 acc=' + p.acc.toFixed(1) + 'm');
+
+          if(p.acc <= ACCEPT_ACC_M){
+            const accepted = best && best.acc <= ACCEPT_ACC_M ? best : p;
+            setStatus('GPS取得成功', 'acc=' + Number(accepted.acc).toFixed(1) + 'm\nログページへ戻ります。');
+            await sleep(350);
+            returnToLog({
+              ok: true,
+              lat: accepted.lat,
+              lng: accepted.lng,
+              acc: Number(accepted.acc),
+              pos_ms: Number(accepted.pos_ms || Date.now()),
+              t_ms: Date.now(),
+              attempts: Number(attempt || 1),
+              target_acc_m: TARGET_ACC_M,
+              accept_acc_m: ACCEPT_ACC_M,
+              target_met: !!(accepted.acc <= TARGET_ACC_M),
+              accepted: true,
+              timeout_ms: POSITION_TIMEOUT_MS,
+              maximum_age_ms: 0
+            });
+            return;
           }
         }
       }catch(err){
         lastError = err || null;
+        const msg = String((err && err.message) || 'position unavailable');
+        setBest(best, '直近エラー: ' + msg);
       }
-      if(attempt < MAX_ATTEMPTS) await sleep(RETRY_DELAY_MS);
-    }
 
-    return {best:best, attempts:MAX_ATTEMPTS, target_met:false, last_error:lastError};
+      if(Date.now() - startedMs > FIRST_STATUS_AFTER_MS){
+        showControls();
+        if(backBtn){
+          backBtn.onclick = function(){
+            cancelled = true;
+            // 精度不足では座標を返さず、/log側に保存させない。
+            returnToLog({
+              ok:false,
+              error:'accuracy_not_reached_manual_return',
+              error_message:'一桁精度に到達しないため手動で戻りました。',
+              best_acc: best && Number.isFinite(best.acc) ? Number(best.acc) : 0,
+              attempts: attempt,
+              target_acc_m: TARGET_ACC_M,
+              accept_acc_m: ACCEPT_ACC_M,
+              t_ms: Date.now()
+            });
+          };
+        }
+      }
+
+      await sleep(RETRY_DELAY_MS);
+    }
   }
 
   async function start(){
+    cancelled = false;
+    attempt = 0;
+    best = null;
+    startedMs = Date.now();
+    setBest(null);
+    if(retryBtn) retryBtn.style.display = 'none';
+    if(backBtn) backBtn.style.display = 'none';
+
     if(!('geolocation' in navigator)){
       returnToLog({ ok:false, error:'no_geolocation', error_message:'このブラウザでは位置情報を使えません。', bridge_version:VERSION });
       return;
     }
 
-    if(retryBtn) retryBtn.style.display = 'none';
-    if(backBtn) backBtn.style.display = 'none';
-
     try{
-      const result = await getBestPosition();
-      const best = result.best;
-      if(!validPlain(best)){
-        const err = result.last_error || {};
-        returnToLog({
-          ok:false,
-          error:'geolocation_error',
-          code: Number(err.code || 0),
-          error_message: String(err.message || 'position unavailable'),
-          attempts: result.attempts,
-          target_acc_m: TARGET_ACC_M,
-          timeout_ms: POSITION_TIMEOUT_MS,
-          maximum_age_ms: 0,
-          t_ms: Date.now()
-        });
-        return;
-      }
-
-      const accText = Number.isFinite(best.acc) ? best.acc.toFixed(1) : '-';
-      setStatus('GPS取得成功', '採用精度 acc=' + accText + 'm\nログページへ戻ります。');
-      returnToLog({
-        ok: true,
-        lat: best.lat,
-        lng: best.lng,
-        acc: Number.isFinite(best.acc) ? best.acc : 0,
-        pos_ms: Number(best.pos_ms || Date.now()),
-        t_ms: Date.now(),
-        attempts: Number(result.attempts || 1),
-        target_acc_m: TARGET_ACC_M,
-        target_met: !!result.target_met,
-        timeout_ms: POSITION_TIMEOUT_MS,
-        maximum_age_ms: 0
-      });
+      await acquireUntilOneDigit();
     }catch(e){
-      returnToLog({ ok:false, error:'bridge_exception', error_message:String(e && e.message ? e.message : e), t_ms:Date.now() });
+      showControls();
+      setStatus('GPS取得エラー', String(e && e.message ? e.message : e));
+      if(backBtn){
+        backBtn.onclick = function(){
+          returnToLog({ ok:false, error:'bridge_exception', error_message:String(e && e.message ? e.message : e), t_ms:Date.now() });
+        };
+      }
     }
   }
 

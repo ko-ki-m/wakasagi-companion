@@ -1,11 +1,11 @@
 // Wakasagi Companion offline GPS link service worker
-// Version: 2026-05-29 gps-bridge-n-precision
+// Version: 2026-05-29 gps-bridge-q-wait-one-digit
 // 目的:
 // - 現在のMap本体に必要なファイルをキャッシュする。
 // - gps-recorder.html / gps-bridge.html を index.html にフォールバックさせない。
-// - gps-bridge.html の高精度取得版を確実に反映させる。
+// - gps-bridge.html の一桁精度到達まで戻らない版を確実に反映させる。
 // - Pico W .ino / /log / リール制御には一切関与しない。
-const CACHE_NAME = 'wakasagi-companion-shell-v20260529-gps-bridge-n-precision';
+const CACHE_NAME = 'wakasagi-companion-shell-v20260529-gps-bridge-q-wait-one-digit';
 const APP_SHELL = [
   './',
   './index.html',
