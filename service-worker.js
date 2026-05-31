@@ -1,7 +1,5 @@
 // Wakasagi Map rollback v11.5 - service worker disabled/unregister
-self.addEventListener('install', event => {
-  self.skipWaiting();
-});
+self.addEventListener('install', event => { self.skipWaiting(); });
 self.addEventListener('activate', event => {
   event.waitUntil((async()=>{
     try{
