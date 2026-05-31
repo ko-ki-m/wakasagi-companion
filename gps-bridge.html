@@ -32,7 +32,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'gps-bridge-20260531t-fast-watch8s-best';
+  const VERSION = 'gps-bridge-20260531u-fast-watch8s-return-url-fix';
   const TARGET_ACC_M = 8.0;
   const ACCEPT_ACC_M = 9.9;
   const MAX_WAIT_MS = 8000;
@@ -58,12 +58,12 @@
   }
 
   function readReturnUrl(){
-    const q = params.get('return') || params.get('returnUrl') || params.get('back') || params.get('u') || '';
+    const q = params.get('return_url') || params.get('return') || params.get('returnUrl') || params.get('back') || params.get('u') || '';
     if(q){
       try{ return decodeURIComponent(q); }catch(e){ return q; }
     }
     const h = new URLSearchParams((location.hash || '').replace(/^#/,''));
-    const hr = h.get('return') || h.get('returnUrl') || h.get('back') || h.get('u') || '';
+    const hr = h.get('return_url') || h.get('return') || h.get('returnUrl') || h.get('back') || h.get('u') || '';
     if(hr){
       try{ return decodeURIComponent(hr); }catch(e){ return hr; }
     }
