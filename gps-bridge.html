@@ -32,7 +32,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'gps-bridge-20260531v-front-auto-return';
+  const VERSION = 'gps-bridge-20260531w-front-auto-return-b64';
   const TARGET_ACC_M = 8.0;
   const ACCEPT_ACC_M = 9.9;
   const MAX_WAIT_MS = 8000;
@@ -149,8 +149,13 @@
   }
 
   function encodePayload(obj){
-    try{ return encodeURIComponent(JSON.stringify(obj)); }
-    catch(e){ return ''; }
+    try{
+      const json = JSON.stringify(obj);
+      const utf8 = unescape(encodeURIComponent(json));
+      return encodeURIComponent(btoa(utf8));
+    }catch(e){
+      try{ return encodeURIComponent(btoa(JSON.stringify(obj))); }catch(e2){ return ''; }
+    }
   }
 
   function appendGpsBridgeHash(url, payload){
