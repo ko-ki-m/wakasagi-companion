@@ -21,8 +21,8 @@
 <body>
 <div class="card">
   <h1>GPS取得中</h1>
-  <p>スマホの現在地を高精度取得しています。</p>
-  <p>短時間だけGPS更新を見て、10m以下になればすぐログページへ戻ります。10m以下にならない場合も最良値で戻ります。</p>
+  <p>この画面を前面にしたまま、スマホの現在地を取得しています。</p>
+  <p>取得後は自動でPico Wのログページへ戻ります。</p>
   <div id="acc" class="big">測位待ち...</div>
   <p id="state" class="muted">準備中</p>
   <button id="retry" style="display:none">もう一度取得</button>
@@ -32,7 +32,7 @@
 (() => {
   'use strict';
 
-  const VERSION = 'gps-bridge-20260531u-fast-watch8s-return-url-fix';
+  const VERSION = 'gps-bridge-20260531v-front-auto-return';
   const TARGET_ACC_M = 8.0;
   const ACCEPT_ACC_M = 9.9;
   const MAX_WAIT_MS = 8000;
@@ -45,36 +45,43 @@
   const retryBtn = $('retry');
   const backBtn = $('back');
 
+  const params = new URLSearchParams(location.search || '');
   let returned = false;
   let watchId = null;
   let best = null;
   let sampleCount = 0;
   const startedMs = Date.now();
-  const params = new URLSearchParams(location.search || '');
 
   function setState(text, cls){
     stateEl.textContent = text;
     stateEl.className = cls ? cls : 'muted';
   }
 
-  function readReturnUrl(){
-    const q = params.get('return_url') || params.get('return') || params.get('returnUrl') || params.get('back') || params.get('u') || '';
-    if(q){
-      try{ return decodeURIComponent(q); }catch(e){ return q; }
+  function readParamAny(names){
+    for(const name of names){
+      const v = params.get(name);
+      if(v) return v;
     }
     const h = new URLSearchParams((location.hash || '').replace(/^#/,''));
-    const hr = h.get('return_url') || h.get('return') || h.get('returnUrl') || h.get('back') || h.get('u') || '';
-    if(hr){
-      try{ return decodeURIComponent(hr); }catch(e){ return hr; }
+    for(const name of names){
+      const v = h.get(name);
+      if(v) return v;
     }
     return '';
   }
 
+  function readReturnUrl(){
+    // .ino側 buildGpsBridgeUrl() は return_url を渡す。このキーを最優先で読む。
+    const v = readParamAny(['return_url','return','returnUrl','back','u']);
+    if(!v) return '';
+    try{ return decodeURIComponent(v); }catch(e){ return v; }
+  }
+
   const returnUrl = readReturnUrl();
-  const reason = params.get('reason') || params.get('r') || 'auto_log_start';
-  const triggerSeq = params.get('trigger_seq') || params.get('seq') || '';
-  const activityGapMs = params.get('activity_gap_ms') || '';
-  const activityCount = params.get('activity_count') || '';
+  const reason = readParamAny(['reason','r']) || 'auto_log_start';
+  const triggerSeq = readParamAny(['trigger_seq','seq']);
+  const activityGapMs = readParamAny(['activity_gap_ms']);
+  const activityCount = readParamAny(['activity_count']);
 
   function stopWatch(){
     if(watchId !== null){
@@ -84,23 +91,26 @@
   }
 
   function updateBest(pos){
-    if(!pos || !pos.coords) return;
+    if(returned || !pos || !pos.coords) return;
     const lat = Number(pos.coords.latitude);
     const lng = Number(pos.coords.longitude);
     const acc = Number(pos.coords.accuracy);
     if(!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(acc)) return;
+
     sampleCount++;
     const item = {
-      lat, lng, acc,
+      lat:lat,
+      lng:lng,
+      acc:acc,
       pos_ms:Number(pos.timestamp || Date.now()),
       received_ms:Date.now()
     };
-    if(!best || item.acc < best.acc){
-      best = item;
-    }
-    accEl.textContent = `acc=${item.acc.toFixed(1)}m`;
+    if(!best || item.acc < best.acc) best = item;
+
+    accEl.textContent = 'acc=' + item.acc.toFixed(1) + 'm';
     accEl.className = item.acc <= ACCEPT_ACC_M ? 'big ok' : 'big warn';
-    setState(`sample=${sampleCount} / best=${best.acc.toFixed(1)}m / elapsed=${Date.now()-startedMs}ms`, 'muted');
+    setState('sample=' + sampleCount + ' / best=' + best.acc.toFixed(1) + 'm / elapsed=' + (Date.now()-startedMs) + 'ms', 'muted');
+
     if(best.acc <= ACCEPT_ACC_M){
       returnToLog('accepted');
     }
@@ -113,7 +123,7 @@
       source:'github_gps_bridge',
       reason:reason,
       bridge_version:VERSION,
-      method:'watchPosition_fast_best',
+      method:'front_auto_watch_best',
       target_acc_m:String(TARGET_ACC_M),
       accept_acc_m:String(ACCEPT_ACC_M),
       timeout_ms:String(MAX_WAIT_MS),
@@ -152,27 +162,36 @@
     if(returned) return;
     returned = true;
     stopWatch();
+
     const payload = buildPayload(!!best, status || (best ? 'best' : 'no_position'));
     if(best){
-      setState(`ログページへ戻ります best=${best.acc.toFixed(1)}m`, best.acc <= ACCEPT_ACC_M ? 'ok' : 'warn');
+      setState('ログページへ戻ります best=' + best.acc.toFixed(1) + 'm', best.acc <= ACCEPT_ACC_M ? 'ok' : 'warn');
     }else{
       accEl.textContent = 'GPS取得失敗';
       accEl.className = 'big err';
-      setState('位置情報を取得できませんでした', 'err');
+      setState('GPS値が取れませんでした。ログページへ戻ります。', 'err');
     }
+
     if(returnUrl){
       location.replace(appendGpsBridgeHash(returnUrl, payload));
-    }else{
-      retryBtn.style.display = '';
-      backBtn.style.display = '';
+      return;
     }
+
+    // return_url が無い異常時だけ手動ボタンを表示する。
+    retryBtn.style.display = '';
+    backBtn.style.display = '';
+    setState('return_urlが無いため自動復帰できません。', 'err');
   }
 
   function start(){
+    if(!returnUrl){
+      setState('return_urlがありません。/logから開き直してください。', 'err');
+    }
     if(!('geolocation' in navigator)){
       returnToLog('geolocation_not_available');
       return;
     }
+
     returned = false;
     best = null;
     sampleCount = 0;
@@ -180,7 +199,7 @@
     backBtn.style.display = 'none';
     accEl.textContent = '測位待ち...';
     accEl.className = 'big';
-    setState(`最大${(MAX_WAIT_MS/1000).toFixed(0)}秒だけ取得します`, 'muted');
+    setState('GPS Bridgeを前面で開始しました。取得後は自動でログページへ戻ります。', 'muted');
 
     const opt = {
       enableHighAccuracy:true,
@@ -189,34 +208,28 @@
     };
 
     try{
-      watchId = navigator.geolocation.watchPosition(
-        updateBest,
-        (err) => {
-          setState(`GPS更新エラー code=${err && err.code ? err.code : ''}`, 'warn');
-        },
-        opt
-      );
+      watchId = navigator.geolocation.watchPosition(updateBest, (err) => {
+        if(returned) return;
+        setState('GPS更新待ち code=' + (err && err.code ? err.code : ''), 'muted');
+      }, opt);
     }catch(e){
       returnToLog('watch_exception');
       return;
     }
 
     try{
-      navigator.geolocation.getCurrentPosition(
-        updateBest,
-        (err) => {
-          setState(`初回GPS待ち code=${err && err.code ? err.code : ''}`, 'muted');
-        },
-        opt
-      );
+      navigator.geolocation.getCurrentPosition(updateBest, (err) => {
+        if(returned) return;
+        setState('初回GPS待ち code=' + (err && err.code ? err.code : ''), 'muted');
+      }, opt);
     }catch(e){}
 
-    setTimeout(() => returnToLog(best ? 'time_limit_best' : 'time_limit_no_position'), MAX_WAIT_MS);
+    setTimeout(() => {
+      returnToLog(best ? 'time_limit_best' : 'time_limit_no_position');
+    }, MAX_WAIT_MS);
   }
 
-  retryBtn.addEventListener('click', () => {
-    location.reload();
-  });
+  retryBtn.addEventListener('click', () => location.reload());
   backBtn.addEventListener('click', () => {
     if(returnUrl){
       location.replace(appendGpsBridgeHash(returnUrl, buildPayload(!!best, 'manual_back')));
