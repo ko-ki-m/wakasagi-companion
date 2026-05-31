@@ -1,38 +1,38 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-  <title>Wakasagi GPS Recorder</title>
-  <style>
-    body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;margin:14px;line-height:1.55;background:#0f172a;color:#e5e7eb;}
-    h1{font-size:20px;margin:0 0 10px;}
-    .card{border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:12px;margin:10px 0;background:rgba(255,255,255,.06);}
-    .status{font-weight:700;margin:8px 0;color:#93c5fd;}
-    .good{color:#86efac}.warn{color:#fde68a}.bad{color:#fca5a5}
-    button{font-size:16px;padding:10px 12px;margin:5px 4px 5px 0;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:#1e293b;color:#fff;}
-    pre{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.28);padding:10px;border-radius:10px;font-size:12px;}
-    .small{font-size:13px;opacity:.85;}
-  </style>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+ <title>Wakasagi GPS Recorder</title>
+ <style>
+ body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;margin:14px;line-height:1.55;background:#0f172a;color:#e5e7eb;}
+ h1{font-size:20px;margin:0 0 10px;}
+ .card{border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:12px;margin:10px 0;background:rgba(255,255,255,.06);}
+ .status{font-weight:700;margin:8px 0;color:#93c5fd;}
+ .good{color:#86efac}.warn{color:#fde68a}.bad{color:#fca5a5}
+ button{font-size:16px;padding:10px 12px;margin:5px 4px 5px 0;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:#1e293b;color:#fff;}
+ pre{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.28);padding:10px;border-radius:10px;font-size:12px;}
+ .small{font-size:13px;opacity:.85;}
+ </style>
 </head>
 <body>
-  <h1>Wakasagi GPS Recorder</h1>
-  <div class="card">
-    <div class="small">
-      このページはスマホ側HTTPSでGPS候補だけを取得・保存します。Pico W本体、/log同期、リール制御、Map履歴には直接書き込みません。
-    </div>
-    <div id="status" class="status">待機中</div>
-    <button id="btnStart">現在地を記録</button>
-    <button id="btnOne">現在地を再取得</button>
-    <button id="btnStop">停止</button>
-    <button id="btnClearSid">このsidのGPS候補を削除</button>
-    <button id="btnClearAll">全GPS候補を削除</button>
-  </div>
-  <div class="card small">
-    <b>待機モード</b><br>
-    釣行ログ入口から別ウィンドウで開かれた場合、/log側からのGPS要求を待ち受けます。要求が来た時だけGPSを1回取得します。
-  </div>
-  <pre id="debug">{}</pre>
-  <script src="./gps_recorder.js?v=20260527k" defer></script>
+ <h1>Wakasagi GPS Recorder</h1>
+ <div class="card">
+ <div class="small">
+ このページはスマホ側HTTPSでGPS候補だけを取得・保存します。Pico W本体、/log同期、リール制御、Map履歴には直接書き込みません。
+ </div>
+ <div id="status" class="status">待機中</div>
+ <button id="btnStart">現在地を記録</button>
+ <button id="btnOne">現在地を再取得</button>
+ <button id="btnStop">停止</button>
+ <button id="btnClearSid">このsidのGPS候補を削除</button>
+ <button id="btnClearAll">全GPS候補を削除</button>
+ </div>
+ <div class="card small">
+ <b>待機モード</b><br>
+ 釣行ログ入口から別ウィンドウで開かれた場合、/log側からのGPS要求を待ち受けます。要求が来た時だけGPSを1回取得します。GPS精度が悪くても保存拒否せず、精度注意として返します。
+ </div>
+ <pre id="debug">{}</pre>
+ <script src="./gps_recorder.js?v=20260531s" defer></script>
 </body>
 </html>

@@ -1,13 +1,13 @@
 (function(){
   'use strict';
 
-  const VERSION = 'gps_recorder_20260528l_request_runner_named_log';
+  const VERSION = 'gps_recorder_20260531s_no_acc_reject';
   const DB_NAME = 'wakasagi_gps_recorder_v1';
   const DB_VER = 1;
   const STORE_CAND = 'gps_candidates';
   const STORE_META = 'meta';
   const MOVE_M = 10;
-  const MAX_ACC_M = 35;
+  const GOOD_ACC_M = 9.9;
 
   const $ = id => document.getElementById(id);
   const statusEl = $('status');
@@ -30,13 +30,13 @@
   let requestCount = 0;
   let busy = false;
 
+  function now(){ return Date.now(); }
   function setStatus(text, cls){
     if(statusEl){
       statusEl.textContent = text;
       statusEl.className = 'status ' + (cls || '');
     }
   }
-
   function dbg(obj){
     if(!debugEl) return;
     debugEl.textContent = JSON.stringify(Object.assign({
@@ -46,18 +46,17 @@
       mode: mode,
       sampleCount: sampleCount,
       requestCount: requestCount,
-      behavior: 'request_only_one_shot_named_log',
+      behavior: 'request_only_one_shot_named_log_no_acc_reject',
       auto_timer: false,
       autostart: false,
       watchPosition: false,
       trip_records_write: false,
-      pico_write: false
+      pico_write: false,
+      acc_reject: false,
+      low_accuracy_saved: true
     }, obj || {}), null, 2);
   }
-
-  function now(){ return Date.now(); }
   function toRad(v){ return Number(v) * Math.PI / 180; }
-
   function distM(lat1, lng1, lat2, lng2){
     const a1 = Number(lat1), o1 = Number(lng1), a2 = Number(lat2), o2 = Number(lng2);
     if(!Number.isFinite(a1) || !Number.isFinite(o1) || !Number.isFinite(a2) || !Number.isFinite(o2)) return null;
@@ -69,11 +68,15 @@
     const x = s1 * s1 + Math.cos(toRad(a1)) * Math.cos(toRad(a2)) * s2 * s2;
     return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
   }
-
   function idFor(no){
     return String(sid || 'nosid') + '_G' + String(no).padStart(4, '0');
   }
-
+  function qualityForAcc(acc){
+    if(Number.isFinite(acc) && acc <= GOOD_ACC_M){
+      return {quality:'confirmed', label:'精度良好'};
+    }
+    return {quality:'low_accuracy', label:'精度注意'};
+  }
   function openDb(){
     return new Promise((resolve, reject)=>{
       if(!('indexedDB' in window)){
@@ -96,7 +99,6 @@
       req.onerror = () => reject(req.error || new Error('indexedDB open failed'));
     });
   }
-
   function put(store, rec){
     return new Promise(resolve=>{
       const tx = db.transaction(store, 'readwrite');
@@ -105,10 +107,12 @@
       tx.onerror = () => resolve(false);
     });
   }
-
   function getLatestCandidate(){
     return new Promise(resolve=>{
-      if(!sid || !db){ resolve(null); return; }
+      if(!sid || !db){
+        resolve(null);
+        return;
+      }
       const tx = db.transaction(STORE_CAND, 'readonly');
       const st = tx.objectStore(STORE_CAND);
       const idx = st.index('sid_start');
@@ -121,10 +125,12 @@
       req.onerror = () => resolve(null);
     });
   }
-
   function getAllCandidates(){
     return new Promise(resolve=>{
-      if(!db){ resolve([]); return; }
+      if(!db){
+        resolve([]);
+        return;
+      }
       try{
         const tx = db.transaction(STORE_CAND, 'readonly');
         const req = tx.objectStore(STORE_CAND).getAll();
@@ -135,10 +141,12 @@
       }
     });
   }
-
   function deleteCandidatesBySid(sidTarget){
     return new Promise(resolve=>{
-      if(!db || !sidTarget){ resolve(0); return; }
+      if(!db || !sidTarget){
+        resolve(0);
+        return;
+      }
       let count = 0;
       try{
         const tx = db.transaction(STORE_CAND, 'readwrite');
@@ -160,10 +168,12 @@
       }
     });
   }
-
   function deleteAllCandidates(){
     return new Promise(resolve=>{
-      if(!db){ resolve(false); return; }
+      if(!db){
+        resolve(false);
+        return;
+      }
       try{
         const tx = db.transaction(STORE_CAND, 'readwrite');
         tx.objectStore(STORE_CAND).clear();
@@ -174,13 +184,11 @@
       }
     });
   }
-
   async function refreshDebugAfterDelete(note){
     lastCandidate = await getLatestCandidate();
     const all = await getAllCandidates();
     dbg({ready:true, note:note || '', remaining_all:all.length, lastCandidate:lastCandidate});
   }
-
   async function clearCurrentSidCandidates(){
     if(!db) db = await openDb();
     if(!sid){
@@ -193,7 +201,6 @@
     setStatus('このsidのGPS候補を削除: ' + count + '件','good');
     await refreshDebugAfterDelete('deleted current sid candidates');
   }
-
   async function clearAllCandidates(){
     if(!db) db = await openDb();
     if(!confirm('GPS Recorder側の全GPS候補を削除します。\n\nMap保存済み履歴やPico W /log側DBは削除しません。')) return;
@@ -201,7 +208,6 @@
     setStatus(ok ? '全GPS候補を削除しました' : '全GPS候補削除に失敗', ok ? 'good' : 'bad');
     await refreshDebugAfterDelete('deleted all recorder candidates');
   }
-
   function getPosition(){
     return new Promise((resolve, reject)=>{
       if(!('geolocation' in navigator)){
@@ -215,7 +221,6 @@
       });
     });
   }
-
   async function commitPosition(pos, source, requestMeta){
     if(!db) db = await openDb();
     const c = pos && pos.coords ? pos.coords : {};
@@ -223,7 +228,7 @@
     const lng = Number(c.longitude);
     const acc = Number(c.accuracy || 0);
     const posMs = Number(pos && pos.timestamp ? pos.timestamp : now());
-
+    const capturedMs = now();
     sampleCount++;
 
     if(!sid && requestMeta && requestMeta.sid){
@@ -236,24 +241,34 @@
       dbg({error:'missing sid'});
       return {ok:false,error:'missing_sid'};
     }
-
     if(!Number.isFinite(lat) || !Number.isFinite(lng)){
       setStatus('GPS値が不正です','bad');
       dbg({error:'invalid lat/lng'});
       return {ok:false,error:'invalid_latlng'};
     }
 
-    if(Number.isFinite(acc) && acc > MAX_ACC_M){
-      setStatus('GPS精度不足: ' + acc.toFixed(1) + 'm','warn');
-      dbg({lat:lat.toFixed(7), lng:lng.toFixed(7), acc_m:acc.toFixed(1), rejected:'accuracy'});
-      return {ok:false,error:'accuracy',lat,lng,acc_m:acc};
-    }
-
+    const q = qualityForAcc(acc);
     const latest = lastCandidate || await getLatestCandidate();
     let d = null;
     if(latest){
       d = distM(latest.latest_lat || latest.lat, latest.latest_lng || latest.lng, lat, lng);
     }
+
+    const sample = {
+      source: source || VERSION,
+      lat: lat.toFixed(7),
+      lng: lng.toFixed(7),
+      acc_m: Number.isFinite(acc) ? acc.toFixed(1) : '',
+      gps_quality: q.quality,
+      gps_quality_label: q.label,
+      pos_ms: posMs,
+      saved_ms: capturedMs,
+      request_id: requestMeta && requestMeta.request_id ? String(requestMeta.request_id) : '',
+      request_reason: requestMeta && requestMeta.reason ? String(requestMeta.reason) : '',
+      request_seq: requestMeta && requestMeta.seq ? Number(requestMeta.seq) : 0,
+      request_t_ms: requestMeta && requestMeta.t_ms ? Number(requestMeta.t_ms) : 0,
+      phone_request_ms: requestMeta && requestMeta.phone_request_ms ? Number(requestMeta.phone_request_ms) : 0
+    };
 
     let rec;
     if(!latest || d === null || d >= MOVE_M){
@@ -263,47 +278,62 @@
         sid: sid || 'nosid',
         pico: pico,
         candidate_no: no,
-        start_ms: now(),
-        end_ms: now(),
+        start_ms: capturedMs,
+        end_ms: capturedMs,
         lat: lat.toFixed(7),
         lng: lng.toFixed(7),
         latest_lat: lat.toFixed(7),
         latest_lng: lng.toFixed(7),
         acc_m: Number.isFinite(acc) ? acc.toFixed(1) : '',
         best_acc_m: Number.isFinite(acc) ? acc.toFixed(1) : '',
+        latest_acc_m: Number.isFinite(acc) ? acc.toFixed(1) : '',
+        gps_quality: q.quality,
+        gps_quality_label: q.label,
         sample_count: 1,
         moved_from_prev_m: d !== null && Number.isFinite(d) ? d.toFixed(1) : '',
         pos_ms: posMs,
         source: source || VERSION,
-        request_id: requestMeta && requestMeta.request_id ? String(requestMeta.request_id) : '',
-        request_reason: requestMeta && requestMeta.reason ? String(requestMeta.reason) : '',
-        request_seq: requestMeta && requestMeta.seq ? Number(requestMeta.seq) : 0,
-        request_t_ms: requestMeta && requestMeta.t_ms ? Number(requestMeta.t_ms) : 0,
-        phone_request_ms: requestMeta && requestMeta.phone_request_ms ? Number(requestMeta.phone_request_ms) : 0,
-        created_ms: now(),
-        updated_ms: now(),
+        latest_source: source || VERSION,
+        best_source: source || VERSION,
+        request_id: sample.request_id,
+        request_reason: sample.request_reason,
+        request_seq: sample.request_seq,
+        request_t_ms: sample.request_t_ms,
+        phone_request_ms: sample.phone_request_ms,
+        sample_log: [sample],
+        created_ms: capturedMs,
+        updated_ms: capturedMs,
         status: 'candidate_only_not_visit'
       };
-      setStatus('GPS候補保存: G' + no,'good');
+      setStatus('GPS候補保存: G' + no + ' / ' + q.label + ' ' + (Number.isFinite(acc) ? acc.toFixed(1) : '-') + 'm', q.quality === 'confirmed' ? 'good' : 'warn');
     }else{
       rec = Object.assign({}, latest);
-      rec.end_ms = now();
+      rec.end_ms = capturedMs;
       rec.latest_lat = lat.toFixed(7);
       rec.latest_lng = lng.toFixed(7);
+      rec.latest_acc_m = Number.isFinite(acc) ? acc.toFixed(1) : '';
+      rec.latest_source = source || VERSION;
       rec.sample_count = Number(rec.sample_count || 0) + 1;
-      rec.updated_ms = now();
+      rec.updated_ms = capturedMs;
       rec.pos_ms = posMs;
-      rec.request_id = requestMeta && requestMeta.request_id ? String(requestMeta.request_id) : String(rec.request_id || '');
-      rec.request_reason = requestMeta && requestMeta.reason ? String(requestMeta.reason) : String(rec.request_reason || '');
-      rec.request_seq = requestMeta && requestMeta.seq ? Number(requestMeta.seq) : Number(rec.request_seq || 0);
-      rec.request_t_ms = requestMeta && requestMeta.t_ms ? Number(requestMeta.t_ms) : Number(rec.request_t_ms || 0);
-      rec.phone_request_ms = requestMeta && requestMeta.phone_request_ms ? Number(requestMeta.phone_request_ms) : Number(rec.phone_request_ms || 0);
+      rec.request_id = sample.request_id || String(rec.request_id || '');
+      rec.request_reason = sample.request_reason || String(rec.request_reason || '');
+      rec.request_seq = sample.request_seq || Number(rec.request_seq || 0);
+      rec.request_t_ms = sample.request_t_ms || Number(rec.request_t_ms || 0);
+      rec.phone_request_ms = sample.phone_request_ms || Number(rec.phone_request_ms || 0);
+      rec.sample_log = (Array.isArray(rec.sample_log) ? rec.sample_log : []).concat([sample]).slice(-8);
+
       const prevBest = Number(rec.best_acc_m || rec.acc_m || 999999);
       if(Number.isFinite(acc) && acc < prevBest){
         rec.best_acc_m = acc.toFixed(1);
         rec.acc_m = acc.toFixed(1);
+        rec.lat = lat.toFixed(7);
+        rec.lng = lng.toFixed(7);
+        rec.best_source = source || VERSION;
+        rec.gps_quality = q.quality;
+        rec.gps_quality_label = q.label;
       }
-      setStatus('GPS候補更新: G' + String(rec.candidate_no || ''),'good');
+      setStatus('GPS候補更新: G' + String(rec.candidate_no || '') + ' / ' + q.label + ' ' + (Number.isFinite(acc) ? acc.toFixed(1) : '-') + 'm','good');
     }
 
     const ok = await put(STORE_CAND, rec);
@@ -316,22 +346,26 @@
       lat: lat.toFixed(7),
       lng: lng.toFixed(7),
       acc_m: Number.isFinite(acc) ? acc.toFixed(1) : '',
+      gps_quality: q.quality,
+      gps_quality_label: q.label,
       moved_from_prev_m: d !== null && Number.isFinite(d) ? d.toFixed(1) : '',
       pos_ms: posMs,
       saved_ms: now(),
       record_id: rec.id,
       source: source || VERSION,
-      request_id: requestMeta && requestMeta.request_id ? String(requestMeta.request_id) : ''
+      recorder_version: VERSION,
+      request_id: sample.request_id
     };
     dbg(Object.assign({
       saved: ok,
-      note: '要求時だけ1回取得。定期取得・autostart・watchPositionはありません。'
+      note: '要求時だけ1回取得。定期取得・autostart・watchPositionはありません。accが悪くても保存拒否しません。'
     }, result));
     return result;
   }
-
   async function sampleOnce(source, requestMeta){
-    if(busy){ return {ok:false,error:'busy'}; }
+    if(busy){
+      return {ok:false,error:'busy'};
+    }
     busy = true;
     try{
       if(!db) db = await openDb();
@@ -354,16 +388,13 @@
       busy = false;
     }
   }
-
   function stop(){
     setStatus('待機中。定期取得はありません。','warn');
     dbg({stopped:true});
   }
-
   function allowedOriginForReply(fallbackOrigin){
     return allowedPicoOrigin === '*' ? (fallbackOrigin || '*') : allowedPicoOrigin;
   }
-
   function postToLogWindow(msg, fallbackOrigin){
     const targetOrigin = allowedOriginForReply(fallbackOrigin);
     let sent = false;
@@ -373,7 +404,6 @@
         sent = true;
       }
     }catch(e){}
-
     if(!sent){
       try{
         const w = window.open('', 'wakasagi_log');
@@ -383,22 +413,17 @@
         }
       }catch(e){}
     }
-
     return sent;
   }
-
   async function handleRequestMessage(ev){
     const data = ev && ev.data ? ev.data : null;
     if(!data || data.type !== 'wakasagi:gps-request') return;
-
     requestCount++;
-
     const originOk = allowedPicoOrigin === '*' || String(ev.origin || '') === String(allowedPicoOrigin || '');
     if(!originOk){
       dbg({rejected:'origin', origin:ev.origin, allowedPicoOrigin:allowedPicoOrigin});
       return;
     }
-
     const meta = {
       sid: String(data.sid || sid || '').trim(),
       reason: String(data.reason || 'log_request'),
@@ -407,18 +432,15 @@
       t_ms: Number(data.t_ms || 0),
       phone_request_ms: now()
     };
-
     setStatus('GPS要求受信: ' + meta.reason, 'warn');
     const result = await sampleOnce('log_request', meta);
     const reply = Object.assign({type:'wakasagi:gps-result'}, meta, result || {});
-
     try{
       if(ev.source && ev.source.postMessage){
         ev.source.postMessage(reply, ev.origin || '*');
         return;
       }
     }catch(e){}
-
     postToLogWindow(reply, ev.origin || '*');
   }
 
@@ -427,7 +449,6 @@
   if(btnStop) btnStop.onclick = stop;
   if(btnClearSid) btnClearSid.onclick = clearCurrentSidCandidates;
   if(btnClearAll) btnClearAll.onclick = clearAllCandidates;
-
   window.addEventListener('message', handleRequestMessage);
 
   (async()=>{
