@@ -32,11 +32,12 @@
 (() => {
   'use strict';
 
-  const VERSION = 'gps-bridge-20260601a-front-auto-return-b64-accuracy-only';
+  const VERSION = 'gps-bridge-20260601b-front-auto-return-b64-getcurrent3';
   const TARGET_ACC_M = 8.0;
   const ACCEPT_ACC_M = 9.9;
-  const MAX_WAIT_MS = 8000;
-  const FIRST_FIX_TIMEOUT_MS = 4500;
+  const MAX_ATTEMPTS = 3;
+  const POSITION_TIMEOUT_MS = 4500;
+  const RETRY_DELAY_MS = 300;
   const MAXIMUM_AGE_MS = 0;
 
   const $ = (id) => document.getElementById(id);
@@ -51,7 +52,6 @@
   let best = null;
   let sampleCount = 0;
   const startedMs = Date.now();
-  const scheduledTimers = [];
 
   function setState(text, cls){
     stateEl.textContent = text;
@@ -72,6 +72,7 @@
   }
 
   function readReturnUrl(){
+    // .ino側 buildGpsBridgeUrl() は return_url を渡す。このキーを最優先で読む。
     const v = readParamAny(['return_url','return','returnUrl','back','u']);
     if(!v) return '';
     try{ return decodeURIComponent(v); }catch(e){ return v; }
@@ -83,15 +84,7 @@
   const activityGapMs = readParamAny(['activity_gap_ms']);
   const activityCount = readParamAny(['activity_count']);
 
-  function clearTimers(){
-    while(scheduledTimers.length){
-      const t = scheduledTimers.pop();
-      try{ clearTimeout(t); }catch(e){}
-    }
-  }
-
   function stopWatch(){
-    clearTimers();
     if(watchId !== null){
       try{ navigator.geolocation.clearWatch(watchId); }catch(e){}
       watchId = null;
@@ -131,10 +124,10 @@
       source:'github_gps_bridge',
       reason:reason,
       bridge_version:VERSION,
-      method:'front_auto_watch_best_plus_fresh_getcurrent',
+      method:'front_auto_getcurrent_3',
       target_acc_m:String(TARGET_ACC_M),
       accept_acc_m:String(ACCEPT_ACC_M),
-      timeout_ms:String(MAX_WAIT_MS),
+      timeout_ms:String(POSITION_TIMEOUT_MS),
       maximum_age_ms:String(MAXIMUM_AGE_MS),
       elapsed_ms:String(elapsedMs),
       sample_count:String(sampleCount),
@@ -167,10 +160,8 @@
   }
 
   function appendGpsBridgeHash(url, payload){
-    const base = String(url || '');
-    const clean = base.replace(/#gpsbridge=.*$/,'').replace(/[?&]gpsbridge=.*$/,'');
-    const sep = clean.indexOf('#') >= 0 ? '&' : '#';
-    return clean + sep + 'gpsbridge=' + encodePayload(payload);
+    const sep = url.indexOf('#') >= 0 ? '&' : '#';
+    return url + sep + 'gpsbridge=' + encodePayload(payload);
   }
 
   function returnToLog(status){
@@ -192,27 +183,10 @@
       return;
     }
 
+    // return_url が無い異常時だけ手動ボタンを表示する。
     retryBtn.style.display = '';
     backBtn.style.display = '';
     setState('return_urlが無いため自動復帰できません。', 'err');
-  }
-
-  function requestFreshOnce(label, timeoutMs){
-    if(returned || !('geolocation' in navigator)) return;
-    try{
-      navigator.geolocation.getCurrentPosition(updateBest, (err) => {
-        if(returned) return;
-        setState(String(label || 'GPS') + '待ち code=' + (err && err.code ? err.code : ''), 'muted');
-      }, {
-        enableHighAccuracy:true,
-        maximumAge:MAXIMUM_AGE_MS,
-        timeout:Number(timeoutMs || FIRST_FIX_TIMEOUT_MS)
-      });
-    }catch(e){}
-  }
-
-  function scheduleFresh(ms, label, timeoutMs){
-    scheduledTimers.push(setTimeout(() => requestFreshOnce(label, timeoutMs), ms));
   }
 
   function start(){
@@ -236,27 +210,33 @@
     const opt = {
       enableHighAccuracy:true,
       maximumAge:MAXIMUM_AGE_MS,
-      timeout:FIRST_FIX_TIMEOUT_MS
+      timeout:POSITION_TIMEOUT_MS
     };
 
-    try{
-      watchId = navigator.geolocation.watchPosition(updateBest, (err) => {
-        if(returned) return;
-        setState('GPS更新待ち code=' + (err && err.code ? err.code : ''), 'muted');
-      }, opt);
-    }catch(e){
-      returnToLog('watch_exception');
-      return;
-    }
+    const runAttempt = (attemptNo) => {
+      if(returned) return;
+      if(attemptNo > MAX_ATTEMPTS){
+        returnToLog(best ? 'three_attempts_best' : 'three_attempts_no_position');
+        return;
+      }
+      setState('GPS取得 ' + attemptNo + '/' + MAX_ATTEMPTS, 'muted');
+      try{
+        navigator.geolocation.getCurrentPosition((pos) => {
+          updateBest(pos);
+          if(returned) return;
+          if(best && best.acc <= ACCEPT_ACC_M) return;
+          setTimeout(() => runAttempt(attemptNo + 1), RETRY_DELAY_MS);
+        }, (err) => {
+          if(returned) return;
+          setState('GPS取得 ' + attemptNo + '/' + MAX_ATTEMPTS + ' code=' + (err && err.code ? err.code : ''), 'muted');
+          setTimeout(() => runAttempt(attemptNo + 1), RETRY_DELAY_MS);
+        }, opt);
+      }catch(e){
+        setTimeout(() => runAttempt(attemptNo + 1), RETRY_DELAY_MS);
+      }
+    };
 
-    requestFreshOnce('初回GPS', FIRST_FIX_TIMEOUT_MS);
-    scheduleFresh(1200, '追加GPS1', 3500);
-    scheduleFresh(2600, '追加GPS2', 3500);
-    scheduleFresh(4600, '追加GPS3', 3000);
-
-    scheduledTimers.push(setTimeout(() => {
-      returnToLog(best ? 'time_limit_best' : 'time_limit_no_position');
-    }, MAX_WAIT_MS));
+    runAttempt(1);
   }
 
   retryBtn.addEventListener('click', () => location.reload());
