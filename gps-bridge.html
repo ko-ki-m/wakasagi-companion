@@ -32,12 +32,11 @@
 (() => {
   'use strict';
 
-  const VERSION = 'gps-bridge-20260601b-front-auto-return-b64-getcurrent3';
+  const VERSION = 'gps-bridge-20260531w-front-auto-return-b64';
   const TARGET_ACC_M = 8.0;
   const ACCEPT_ACC_M = 9.9;
-  const MAX_ATTEMPTS = 3;
-  const POSITION_TIMEOUT_MS = 4500;
-  const RETRY_DELAY_MS = 300;
+  const MAX_WAIT_MS = 8000;
+  const FIRST_FIX_TIMEOUT_MS = 4500;
   const MAXIMUM_AGE_MS = 0;
 
   const $ = (id) => document.getElementById(id);
@@ -124,10 +123,10 @@
       source:'github_gps_bridge',
       reason:reason,
       bridge_version:VERSION,
-      method:'front_auto_getcurrent_3',
+      method:'front_auto_watch_best',
       target_acc_m:String(TARGET_ACC_M),
       accept_acc_m:String(ACCEPT_ACC_M),
-      timeout_ms:String(POSITION_TIMEOUT_MS),
+      timeout_ms:String(MAX_WAIT_MS),
       maximum_age_ms:String(MAXIMUM_AGE_MS),
       elapsed_ms:String(elapsedMs),
       sample_count:String(sampleCount),
@@ -210,33 +209,29 @@
     const opt = {
       enableHighAccuracy:true,
       maximumAge:MAXIMUM_AGE_MS,
-      timeout:POSITION_TIMEOUT_MS
+      timeout:FIRST_FIX_TIMEOUT_MS
     };
 
-    const runAttempt = (attemptNo) => {
-      if(returned) return;
-      if(attemptNo > MAX_ATTEMPTS){
-        returnToLog(best ? 'three_attempts_best' : 'three_attempts_no_position');
-        return;
-      }
-      setState('GPS取得 ' + attemptNo + '/' + MAX_ATTEMPTS, 'muted');
-      try{
-        navigator.geolocation.getCurrentPosition((pos) => {
-          updateBest(pos);
-          if(returned) return;
-          if(best && best.acc <= ACCEPT_ACC_M) return;
-          setTimeout(() => runAttempt(attemptNo + 1), RETRY_DELAY_MS);
-        }, (err) => {
-          if(returned) return;
-          setState('GPS取得 ' + attemptNo + '/' + MAX_ATTEMPTS + ' code=' + (err && err.code ? err.code : ''), 'muted');
-          setTimeout(() => runAttempt(attemptNo + 1), RETRY_DELAY_MS);
-        }, opt);
-      }catch(e){
-        setTimeout(() => runAttempt(attemptNo + 1), RETRY_DELAY_MS);
-      }
-    };
+    try{
+      watchId = navigator.geolocation.watchPosition(updateBest, (err) => {
+        if(returned) return;
+        setState('GPS更新待ち code=' + (err && err.code ? err.code : ''), 'muted');
+      }, opt);
+    }catch(e){
+      returnToLog('watch_exception');
+      return;
+    }
 
-    runAttempt(1);
+    try{
+      navigator.geolocation.getCurrentPosition(updateBest, (err) => {
+        if(returned) return;
+        setState('初回GPS待ち code=' + (err && err.code ? err.code : ''), 'muted');
+      }, opt);
+    }catch(e){}
+
+    setTimeout(() => {
+      returnToLog(best ? 'time_limit_best' : 'time_limit_no_position');
+    }, MAX_WAIT_MS);
   }
 
   retryBtn.addEventListener('click', () => location.reload());
