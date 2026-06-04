@@ -316,14 +316,34 @@ async function v11_makeMapLinkPayload(){
       linked_ms:Date.now()
     };
   }
-  if(typeof currentPos !== 'undefined' && currentPos && Number.isFinite(Number(currentPos.lat)) && Number.isFinite(Number(currentPos.lng))){
+
+  /*
+    通常Map閲覧では自動GPS取得しないが、
+    「現在地を記録」を押した時だけ、この場で新規GPSを取得する。
+    last_pos/currentPos は前回位置の可能性があるため、ここでは保存先として使わない。
+  */
+  const gps = (typeof v113_getFreshGps === 'function') ? await v113_getFreshGps() : null;
+  if(gps && Number.isFinite(Number(gps.lat)) && Number.isFinite(Number(gps.lng))){
+    const freshPos = {
+      lat:Number(gps.lat),
+      lng:Number(gps.lng),
+      acc:Number(gps.acc||0),
+      t:Number(gps.t||Date.now())
+    };
+
+    try{
+      currentPos = freshPos;
+      await metaSet('last_pos', freshPos);
+      updatePosition(freshPos, false, true);
+    }catch(e){}
+
     return {
       v:1,
-      source:'wakasagi_map_v11',
+      source:'wakasagi_map_v11_manual_current',
       map_spot_id:'CURRENT_'+Date.now(),
-      lat:Number(currentPos.lat),
-      lng:Number(currentPos.lng),
-      acc:Number(currentPos.acc||0),
+      lat:Number(freshPos.lat),
+      lng:Number(freshPos.lng),
+      acc:Number(freshPos.acc||0),
       lake_name:'',
       point_name:'現在地',
       place_name:'現在地',
@@ -336,12 +356,25 @@ async function v11_makeMapLinkPayload(){
       linked_ms:Date.now()
     };
   }
+
   return null;
 }
 async function v11_linkToPicoLog(){
   const ip=v11_getPicoIp();
   localStorage.setItem('pico_ip',ip);
-  const payload=await v11_makeMapLinkPayload();
+
+  v11_setLinkBadge('現在地取得中','warn');
+  v11_setLinkStatus('現在地を新規取得しています。');
+
+  let payload=null;
+  try{
+    payload=await v11_makeMapLinkPayload();
+  }catch(e){
+    v11_setLinkBadge('現在地取得失敗','bad');
+    v11_setLinkStatus('現在地を取得できません。位置情報の許可を確認してください。');
+    return;
+  }
+
   if(!payload){
     v11_setLinkBadge('地点なし','bad');
     v11_setLinkStatus('現在地または地図上の過去地点を選択してください。');
@@ -360,13 +393,14 @@ async function v11_linkToPicoLog(){
 function v11_enableLinkButton(){
   const btn=document.getElementById('btnLinkToPico');
   if(!btn) return;
-  let ok=false;
-  try{
-    ok = !!(typeof selectedTripId !== 'undefined' && selectedTripId);
-    ok = ok || !!(typeof currentPos !== 'undefined' && currentPos && Number.isFinite(Number(currentPos.lat)) && Number.isFinite(Number(currentPos.lng)));
-  }catch(e){}
-  btn.disabled=!ok;
-  if(ok) v11_setLinkStatus('現在地を取得し、Pico Wの現在sidへ記録できます。オンラインなら地図表示、オフラインならGPS連携のみで動きます。');
+
+  /*
+    通常Map閲覧では自動GPS取得しないため、currentPosが無い初回でも
+    「現在地を記録」ボタンは押せる必要がある。
+    実際のGPS取得は v11_linkToPicoLog() のクリック時だけ行う。
+  */
+  btn.disabled=false;
+  v11_setLinkStatus('「現在地を記録」を押すとGPSを新規取得し、Pico Wの現在sidへ記録します。');
 }
 
 function v111_applyPicoParam(){
