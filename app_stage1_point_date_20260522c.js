@@ -239,7 +239,13 @@ $('btnLocate').onclick=()=>locate(true);$('btnFitAll').onclick=fitAll;$('btnFitN
     ev.preventDefault();
     selectTrip(t.getAttribute('data-trip-id'));
   }
-});await initPwa();await refreshAll();const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng)))updatePosition(last,false,true);locate(false);}
+});await initPwa();await refreshAll();const last=await metaGet('last_pos');if(last&&validLatLng(Number(last.lat),Number(last.lng)))updatePosition(last,false,true);
+/*
+  通常Map閲覧では自動GPS取得しない。
+  現在地取得は「現在地」ボタン、または autolink=1 専用の
+  v113_runAutoLinkIfRequested() に任せる。
+*/
+}
 window.addEventListener('load',()=>init().catch(e=>{$('locStatus').textContent='初期化エラー: '+(e&&e.message?e.message:e);setBadge('locBadge','エラー','bad');}));
 
 
@@ -366,7 +372,18 @@ function v11_enableLinkButton(){
 function v111_applyPicoParam(){
   try{
     const p=new URLSearchParams(location.search);
-    if(p.get('autolink')==='1') sessionStorage.setItem('wakasagi_autolink_once','1');
+
+    /*
+      autolink=1 は、Pico W側から明示された自動GPS連携専用。
+      通常のMap閲覧では残留フラグで /log#maplink へ戻らないよう、
+      autolink=1 が無い起動では必ず消す。
+    */
+    if(p.get('autolink')==='1'){
+      sessionStorage.setItem('wakasagi_autolink_once','1');
+    }else{
+      sessionStorage.removeItem('wakasagi_autolink_once');
+    }
+
     if(p.get('linked')==='1') sessionStorage.setItem('wakasagi_linked_notice','1');
     const pico=p.get('pico');
     if(!pico) return;
