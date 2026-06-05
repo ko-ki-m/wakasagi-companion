@@ -85,22 +85,43 @@ function encodePayload(obj){
   return btoa(bin);
 }
 
-function returnToLog(payload){
+async function returnToLogWhenBodyQuiet(payload){
   if(!returnUrl){
     setStatus('戻り先がありません', 'warn');
     setDetail(JSON.stringify(payload, null, 2));
     return;
   }
+
+  /*
+    GPS取得が終わっても、ここで即 /log へ戻らない。
+    戻る瞬間もスマホ側ページ移動なので、本体動作より下位。
+    Pico Wが応答しない場合は、本体優先でHTTPを止めている可能性として待つ。
+  */
+  const currentRunId = runId;
+  const g = await waitBodyQuiet(currentRunId);
+  if(currentRunId !== runId) return;
+
+  setStatus('ログページへ戻ります', 'ok');
   const u = returnUrl + '#gpsbridge=' + encodeURIComponent(encodePayload(payload));
   location.href = u;
 }
 
+async function goBackWhenBodyQuiet(){
+  if(!returnUrl){ history.back(); return; }
+  const currentRunId = runId;
+  await waitBodyQuiet(currentRunId);
+  if(currentRunId !== runId) return;
+  location.href = returnUrl;
+}
+
 function manualBack(){
-  if(returnUrl){
-    location.href = returnUrl;
-  }else{
-    history.back();
-  }
+  runId++;
+  const currentRunId = runId;
+  state = 'paused';
+  setTimeout(()=>{
+    if(currentRunId !== runId) return;
+    goBackWhenBodyQuiet();
+  }, 0);
 }
 
 function bodyguardUrl(){
@@ -309,7 +330,7 @@ async function startGpsCycle(currentRunId){
       setStatus('GPS取得完了: ログへ戻ります', 'ok');
 
       const c = pos && pos.coords ? pos.coords : {};
-      returnToLog({
+      returnToLogWhenBodyQuiet({
         ok:1,
         source:'github_gps_bridge',
         sid:sid,
