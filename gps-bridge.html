@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta http-equiv="Cache-Control" content="no-store">
-<title>Wakasagi GPS Bridge</title>
+<title>Wakasagi GPS Bridge v6-public-check-20260606a</title>
 <style>
   :root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0f172a;background:#f8fafc;}
   body{margin:0;padding:18px;}
@@ -21,9 +21,9 @@
 </head>
 <body>
 <div class="card">
-  <h1>GPS取得中</h1>
+  <h1>GPS取得中 v6-public-check-20260606a</h1>
   <div class="big">本体操作を最優先します</div>
-  <div id="status" class="status">準備中</div>
+  <div id="status" class="status">準備中 / v6-public-check-20260606a</div>
   <div id="detail" class="small">この画面を前面にしたまま、スマホの現在地を取得しています。取得後は自動でPico Wのログページへ戻ります。</div>
   <div style="margin-top:12px;">
     <button class="primary" id="retryBtn">もう一度取得</button>
@@ -54,6 +54,7 @@ const QUIET_CHECKS_REQUIRED = 3;
 const GPS_TIMEOUT_MS = 6500;
 const GPS_HARD_TIMEOUT_MS = 9000;
 const GPS_MAXIMUM_AGE_MS = 0;
+const BRIDGE_VERSION = 'v6-public-check-20260606a';
 const AFTER_INTERRUPT_DELAY_MS = 180;
 
 let runId = 0;
@@ -247,7 +248,7 @@ async function monitorBodyDuringGps(currentRunId, baseGuard){
 
 async function acquireGpsWithBodyPriority(currentRunId, baseGuard){
   phase = 'gps';
-  setStatus('GPS測位中', '');
+  setStatus('GPS測位中 / ' + BRIDGE_VERSION, '');
   setDetail('GPS取得中でも本体操作が入った場合は、そのGPS結果を採用せず、本体停止後に同じ要求でGPSだけ取り直します。');
 
   const gpsPromise = getPositionOnce();
@@ -358,6 +359,7 @@ function start(){
   runId++;
   const currentRunId = runId;
   phase = 'starting';
+  setDetail('読み込み版: ' + BRIDGE_VERSION + '\nこの版名が表示されなければ、GitHub側で新しいgps-bridge.htmlが読み込まれていません。');
   pauseCount = 0;
   guardFailCount = 0;
 
