@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta http-equiv="Cache-Control" content="no-store">
-<title>Wakasagi GPS Bridge v6-public-check-20260606a</title>
+<title>Wakasagi GPS Bridge</title>
 <style>
   :root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0f172a;background:#f8fafc;}
   body{margin:0;padding:18px;}
@@ -21,10 +21,10 @@
 </head>
 <body>
 <div class="card">
-  <h1>GPS取得中 v6-public-check-20260606a</h1>
+  <h1>GPS取得中</h1>
   <div class="big">本体操作を最優先します</div>
-  <div id="status" class="status">準備中 / v6-public-check-20260606a</div>
-  <div id="detail" class="small">この画面を前面にしたまま、スマホの現在地を取得しています。取得後は自動でPico Wのログページへ戻ります。</div>
+  <div id="status" class="status">準備中</div>
+  <div id="detail" class="small">この画面を前面にしたまま、スマホの現在地を取得しています。取得後は自動でPico Wのログページへ戻ります。\n読み込み版: v7-return-timeout-20260606b</div>
   <div style="margin-top:12px;">
     <button class="primary" id="retryBtn">もう一度取得</button>
     <button id="backBtn">ログページへ戻る</button>
@@ -32,6 +32,8 @@
 </div>
 <script>
 'use strict';
+
+const BRIDGE_VERSION = 'v7-return-timeout-20260606b';
 
 const $ = (id)=>document.getElementById(id);
 const statusEl = $('status');
@@ -54,7 +56,6 @@ const QUIET_CHECKS_REQUIRED = 3;
 const GPS_TIMEOUT_MS = 6500;
 const GPS_HARD_TIMEOUT_MS = 9000;
 const GPS_MAXIMUM_AGE_MS = 0;
-const BRIDGE_VERSION = 'v6-public-check-20260606a';
 const AFTER_INTERRUPT_DELAY_MS = 180;
 
 let runId = 0;
@@ -248,8 +249,8 @@ async function monitorBodyDuringGps(currentRunId, baseGuard){
 
 async function acquireGpsWithBodyPriority(currentRunId, baseGuard){
   phase = 'gps';
-  setStatus('GPS測位中 / ' + BRIDGE_VERSION, '');
-  setDetail('GPS取得中でも本体操作が入った場合は、そのGPS結果を採用せず、本体停止後に同じ要求でGPSだけ取り直します。');
+  setStatus('GPS測位中 ' + BRIDGE_VERSION, '');
+  setDetail('GPS取得中でも本体操作が入った場合は、そのGPS結果を採用せず、本体停止後に同じ要求でGPSだけ取り直します。\n読み込み版: ' + BRIDGE_VERSION);
 
   const gpsPromise = getPositionOnce();
   const monitorPromise = monitorBodyDuringGps(currentRunId, baseGuard);
@@ -270,11 +271,16 @@ async function acquireGpsWithBodyPriority(currentRunId, baseGuard){
       phase = 'error';
       return first;
     }
-    pauseCount++;
-    phase = 'interrupted';
-    setStatus('GPS未確定: 再取得待ち', 'warn');
-    setDetail('GPSが時間内に確定しませんでした。画面は止めず、本体停止を確認してから同じ要求でGPSだけ取り直します。');
-    return {type:'interrupt', label:'GPS未確定'};
+
+    /*
+      GPS自体が時間内に確定しない場合は、Bridge画面に閉じ込めない。
+      /logへ戻してpendingを残し、/log側の自動再開に戻す。
+      本体操作による中断とは分けて扱う。
+    */
+    phase = 'gps_timeout';
+    setStatus('GPS未確定: ログへ戻ります', 'warn');
+    setDetail('GPSが時間内に確定しませんでした。Bridge画面に固定せず、/logへ戻して同じGPS要求を保持します。\n読み込み版: ' + BRIDGE_VERSION);
+    return {type:'gps_timeout', code:first.code || 3, message:first.message || 'gps timeout'};
   }
 
   if(first && first.type === 'position'){
@@ -340,14 +346,32 @@ async function runGpsBridge(currentRunId){
         pause_count:pauseCount,
         guard_seq:g && g.ok ? Number(g.seq || 0) : 0,
         guard_pulse:g && g.ok ? Number(g.pulse || 0) : 0,
-        guard_activity_seq:g && g.ok ? Number(g.activity_seq || 0) : 0
+        guard_activity_seq:g && g.ok ? Number(g.activity_seq || 0) : 0,
+        bridge_version:BRIDGE_VERSION
+      });
+      return;
+    }
+
+    if(r.type === 'gps_timeout'){
+      await returnToLogWhenBodyQuiet(currentRunId, {
+        ok:0,
+        source:'github_gps_bridge',
+        reason:'gps_timeout',
+        error:'gps_timeout',
+        sid:sid,
+        trigger_seq:triggerSeq,
+        trigger_t_ms:triggerTms,
+        activity_count:activityCount,
+        pause_count:pauseCount,
+        t_ms:Date.now(),
+        bridge_version:BRIDGE_VERSION
       });
       return;
     }
 
     if(r.type === 'error' && r.code === 1){
       setStatus('位置情報の許可がありません', 'warn');
-      setDetail('スマホ側で位置情報を許可してください。許可後に「もう一度取得」を押してください。');
+      setDetail('スマホ側で位置情報を許可してください。許可後に「もう一度取得」を押してください。\n読み込み版: ' + BRIDGE_VERSION);
       return;
     }
 
@@ -359,9 +383,9 @@ function start(){
   runId++;
   const currentRunId = runId;
   phase = 'starting';
-  setDetail('読み込み版: ' + BRIDGE_VERSION + '\nこの版名が表示されなければ、GitHub側で新しいgps-bridge.htmlが読み込まれていません。');
   pauseCount = 0;
   guardFailCount = 0;
+  setDetail('読み込み版: ' + BRIDGE_VERSION + '\nこの画面を前面にしたまま、スマホの現在地を取得しています。');
 
   if(!returnUrl){
     setStatus('return_urlがありません', 'warn');
