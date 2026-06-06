@@ -52,6 +52,7 @@ const GUARD_INTERVAL_MS = 300;
 const GUARD_TIMEOUT_MS = 500;
 const QUIET_CHECKS_REQUIRED = 3;
 const GPS_TIMEOUT_MS = 6500;
+const GPS_HARD_TIMEOUT_MS = 9000;
 const GPS_MAXIMUM_AGE_MS = 0;
 const AFTER_INTERRUPT_DELAY_MS = 180;
 
@@ -188,11 +189,38 @@ function getPositionOnce(){
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      (pos)=>resolve({type:'position', pos}),
-      (err)=>resolve({type:'error', code:Number(err && err.code || 0), message:String(err && err.message || err || '')}),
-      {enableHighAccuracy:true, timeout:GPS_TIMEOUT_MS, maximumAge:GPS_MAXIMUM_AGE_MS}
-    );
+    let settled = false;
+    let hardTimer = 0;
+
+    const finish = (v)=>{
+      if(settled) return;
+      settled = true;
+      if(hardTimer){
+        clearTimeout(hardTimer);
+        hardTimer = 0;
+      }
+      resolve(v);
+    };
+
+    /*
+      ブラウザ/OS側のGPSが沈黙した場合、getCurrentPositionのtimeoutだけでは
+      戻らないことがある。ここで外側の強制タイムアウトを持ち、
+      GPS Bridge画面が「GPS測位中」のまま固定される状態を防ぐ。
+      後から古いGPS結果が返ってきてもsettledで無効化する。
+    */
+    hardTimer = setTimeout(()=>{
+      finish({type:'error', code:3, message:'gps hard timeout'});
+    }, GPS_HARD_TIMEOUT_MS);
+
+    try{
+      navigator.geolocation.getCurrentPosition(
+        (pos)=>finish({type:'position', pos}),
+        (err)=>finish({type:'error', code:Number(err && err.code || 0), message:String(err && err.message || err || '')}),
+        {enableHighAccuracy:true, timeout:GPS_TIMEOUT_MS, maximumAge:GPS_MAXIMUM_AGE_MS}
+      );
+    }catch(e){
+      finish({type:'error', code:0, message:String(e && e.message ? e.message : e)});
+    }
   });
 }
 
@@ -244,7 +272,7 @@ async function acquireGpsWithBodyPriority(currentRunId, baseGuard){
     pauseCount++;
     phase = 'interrupted';
     setStatus('GPS未確定: 再取得待ち', 'warn');
-    setDetail('GPSが時間内に確定しませんでした。本体停止を確認してから同じ要求でGPSだけ取り直します。');
+    setDetail('GPSが時間内に確定しませんでした。画面は止めず、本体停止を確認してから同じ要求でGPSだけ取り直します。');
     return {type:'interrupt', label:'GPS未確定'};
   }
 
