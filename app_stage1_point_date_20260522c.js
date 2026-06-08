@@ -105,7 +105,7 @@ function openOld(){return new Promise(res=>{const r=indexedDB.open(OLD_DB_NAME);
 async function migrateOld(force=false){if(!force && await metaGet('old_migrated'))return 0;let old=await openOld();if(!old||!old.objectStoreNames.contains(OLD_STORE_SPOTS)){await metaSet('old_migrated',true);return 0;}const rows=await new Promise(res=>{const r=old.transaction(OLD_STORE_SPOTS,'readonly').objectStore(OLD_STORE_SPOTS).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>res([]);});let c=0;const cur=await getAllTrips();const exist=new Set(cur.map(x=>String(x.migrated_from||x.trip_id)));for(const row of rows){const t=normalizeOld(row);if(!t)continue;if(!force&&exist.has(String(t.migrated_from||t.trip_id)))continue;await putTrip(t);c++;}await metaSet('old_migrated',true);return c;}
 
 function ensureMap(){if(map)return true;if(!window.L){$('mapStatus').textContent='地図ライブラリ未読込（オフラインGPS連携は可）';return false;}map=L.map('map',{zoomControl:true}).setView(DEFAULT_CENTER,5);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},100);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},600);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);groupLayer=L.layerGroup().addTo(map);return true;}
-function drawCurrent(zoomNow=false){if(!currentPos||!ensureMap())return;const a=Number(currentPos.lat),b=Number(currentPos.lng),acc=Number(currentPos.acc||0);[currentMarker,accCircle,cur20,cur100].forEach(x=>{if(x)x.remove();});currentMarker=L.marker([a,b]).addTo(map).bindPopup('現在地');if(acc>0)accCircle=L.circle([a,b],{radius:acc}).addTo(map);cur20=L.circle([a,b],{radius:SAME_POINT_M,weight:2,fillOpacity:.04}).addTo(map);cur100=L.circle([a,b],{radius:SAME_AREA_M,weight:2,fillOpacity:.015}).addTo(map);if(zoomNow)map.setView([a,b],19);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},50);$('btnFitNear').disabled=false;$('btnSaveScroll').disabled=false;$('btnSaveTrip').disabled=false;}
+function drawCurrent(zoomNow=false){if(!currentPos||!ensureMap())return;const a=Number(currentPos.lat),b=Number(currentPos.lng),acc=Number(currentPos.acc||0);[currentMarker,accCircle,cur20,cur100].forEach(x=>{if(x)x.remove();});const curLabel=(currentPos&&currentPos.source==='pico_logsync')?'Pico Wログ地点':'現在地';currentMarker=L.marker([a,b]).addTo(map).bindPopup(curLabel);if(acc>0)accCircle=L.circle([a,b],{radius:acc}).addTo(map);cur20=L.circle([a,b],{radius:SAME_POINT_M,weight:2,fillOpacity:.04}).addTo(map);cur100=L.circle([a,b],{radius:SAME_AREA_M,weight:2,fillOpacity:.015}).addTo(map);if(zoomNow)map.setView([a,b],19);setTimeout(()=>{try{map.invalidateSize();}catch(e){}},50);$('btnFitNear').disabled=false;$('btnSaveScroll').disabled=false;$('btnSaveTrip').disabled=false;}
 function stage1DateKey(ms){return fmtTime(ms).split(' ')[0];}
 function stage1TimeText(ms){const s=fmtTime(ms);return s.indexOf(' ')>=0?s.split(' ')[1]:s;}
 function stage1DateGroups(trips){const m=new Map();for(const t of (trips||[])){const k=stage1DateKey(tms(t));if(!m.has(k))m.set(k,[]);m.get(k).push(t);}const out=[];for(const [date,rows] of m.entries()){rows.sort((a,b)=>tms(b)-tms(a));out.push({date,trips:rows,latest:rows[0],count:rows.length});}out.sort((a,b)=>tms(b.latest)-tms(a.latest));return out;}
@@ -135,10 +135,29 @@ function itemHtml(t,label,base,sel=false){const d=base?dBase(t,base.lat,base.lng
 async function selectGroup(id){if(groups.length===0)groups=makeGroups(await getAllTrips());const g=groups.find(x=>x.group_id===id);if(!g)return;selectedGroupId=id;selectedTripId=g.latest.trip_id;await renderMap();renderPointHistory(g,g.latest.trip_id);showTripDetail(g.latest,{lat:g.lat,lng:g.lng});drawSelected(g.lat,g.lng);map.setView([g.lat,g.lng],18);}
 async function selectTrip(id){const trips=await getAllTrips();const t=trips.find(x=>x.trip_id===id);if(!t)return;groups=makeGroups(trips);const g=groups.find(gr=>gr.trips.some(x=>x.trip_id===id))||{group_id:'single_'+id,lat:lat(t),lng:lng(t),trips:[t],latest:t,count:1};selectedGroupId=g.group_id;selectedTripId=id;await renderMap();renderPointHistory(g,id);showTripDetail(t,{lat:g.lat,lng:g.lng});drawSelected(g.lat,g.lng);map.setView([lat(t),lng(t)],18);}
 function drawSelected(a,b){[sel20,sel100].forEach(x=>{if(x)x.remove();});sel20=L.circle([a,b],{radius:SAME_POINT_M,weight:3,fillOpacity:.045}).addTo(map);sel100=L.circle([a,b],{radius:SAME_AREA_M,weight:2,fillOpacity:.018}).addTo(map);}
-function showTripDetail(t,base=null){selectedTripId=t.trip_id;$('selectedMini').textContent=title(t);$('selectedLead').innerHTML=`${esc(title(t))}<br><span class="muted">${esc(fmtTime(tms(t)))}</span>`;setBadge('selectedBadge','詳細表示中','good');$('selectedTripDetail').className='detail';$('selectedTripDetail').innerHTML=`<div class="summaryBox"><h3>選択した釣行回</h3>${detailHtml(t,base)}</div><div class="actions"><button id="btnStdSelected">標準地図</button><button id="btnEditSelected">入力欄へ読込</button><button id="btnDeleteSelected" class="danger">この履歴を削除</button></div>`;$('btnStdSelected').onclick=()=>openStd(lat(t),lng(t));$('btnEditSelected').onclick=()=>loadToForm(t.trip_id);$('btnDeleteSelected').onclick=async()=>{if(!confirm('この釣行履歴を削除しますか？'))return;await delTrip(t.trip_id);selectedTripId=null;selectedGroupId=null;$('selectedTripDetail').className='emptyBox';$('selectedTripDetail').textContent='未選択';$('selectedLead').textContent='地図の数字ピン、または下の全履歴から1回分を選ぶと詳細を表示します。';setBadge('selectedBadge','未選択','');await refreshAll();};}
+function showTripDetail(t,base=null){selectedTripId=t.trip_id;try{const p=$('selectedTripDetail');const c=p&&p.closest('.card');if(c)c.style.display='';}catch(e){}$('selectedMini').textContent=title(t);$('selectedLead').innerHTML=`${esc(title(t))}<br><span class="muted">${esc(fmtTime(tms(t)))}</span>`;setBadge('selectedBadge','詳細表示中','good');$('selectedTripDetail').className='detail';$('selectedTripDetail').innerHTML=`<div class="summaryBox"><h3>選択した釣行回</h3>${detailHtml(t,base)}</div><div class="actions"><button id="btnStdSelected">標準地図</button><button id="btnEditSelected">入力欄へ読込</button><button id="btnDeleteSelected" class="danger">この履歴を削除</button></div>`;$('btnStdSelected').onclick=()=>openStd(lat(t),lng(t));$('btnEditSelected').onclick=()=>loadToForm(t.trip_id);$('btnDeleteSelected').onclick=async()=>{if(!confirm('この釣行履歴を削除しますか？'))return;await delTrip(t.trip_id);selectedTripId=null;selectedGroupId=null;$('selectedTripDetail').className='emptyBox';$('selectedTripDetail').textContent='未選択';$('selectedLead').textContent='地図の数字ピン、または下の全履歴から1回分を選ぶと詳細を表示します。';setBadge('selectedBadge','未選択','');await refreshAll();};}
 async function hidePointHistoryCard(){const p=$('pointHistoryPanel');if(!p)return;const c=p.closest('.card');if(c)c.style.display='none';}
 function hideSelectedTripDetailCard(){const p=$('selectedTripDetail');if(!p)return;const c=p.closest('.card');if(c)c.style.display='none';}
-function renderPointHistory(g,focusId){hidePointHistoryCard();}
+function renderPointHistory(g,focusId){
+  const p=$('pointHistoryPanel');
+  if(!p)return;
+  const c=p.closest('.card');
+  if(c)c.style.display='';
+  const trips=(g&&Array.isArray(g.trips))?g.trips.slice():[];
+  const dg=stage1DateGroups(trips);
+  setBadge('pointBadge',dg.length?`過去${dg.length}日`:'履歴なし',dg.length?'good':'');
+  p.className=dg.length?'list':'emptyBox';
+  if(!dg.length){p.textContent='この地点の履歴がありません。';return;}
+  p.innerHTML=dg.map(d=>{
+    const rows=(d.trips||[]).slice().sort((a,b)=>tms(b)-tms(a));
+    const focus=rows.some(t=>String(t.trip_id)===String(focusId));
+    const buttons=rows.map(t=>{
+      const sel=String(t.trip_id)===String(focusId)?' selected':'';
+      return `<button class="popupBtn${sel}" data-trip-id="${esc(t.trip_id)}">${esc(stage1TimeText(tms(t)))}　${esc(title(t))}</button>`;
+    }).join(' ');
+    return `<div class="item${focus?' selected':''}"><div class="top"><span>${esc(d.count>1?`${d.date} (${d.count})`:d.date)}</span><span>${esc(String(d.count))}回</span></div><div class="body">${buttons}</div></div>`;
+  }).join('');
+}
 async function refreshCounts(){const trips=await getAllTrips();$('totalTrips').textContent=String(trips.length);if(!currentPos){$('count20').textContent='-';$('count100').textContent='-';return;}const arr=trips.map(t=>dCurrent(t)).filter(d=>d!==null);const n20=arr.filter(d=>d<=SAME_POINT_M).length,n100=arr.filter(d=>d<=SAME_AREA_M).length;$('count20').textContent=String(n20);$('count100').textContent=String(n100);}
 function filterTrips(trips){const q=($('searchBox').value||'').trim().toLowerCase();let list=trips.slice();if(q){list=list.filter(t=>[fmtTime(tms(t)),t.lake_name,t.point_name,t.line_no,t.sinker_g,t.fishfinder_depth_m,t.water_temp_c,t.weather,t.wind,t.memo].join(' ').toLowerCase().includes(q));}const m=$('sortMode').value;list.sort((a,b)=>{if(m==='date_desc')return tms(b)-tms(a);if(m==='date_asc')return tms(a)-tms(b);if(m==='name')return(`${a.lake_name||''} ${a.point_name||''}`).localeCompare(`${b.lake_name||''} ${b.point_name||''}`,'ja');if(currentPos)return(dCurrent(a)??Infinity)-(dCurrent(b)??Infinity);return tms(b)-tms(a);});return list;}
 async function renderAllList(){
@@ -562,6 +581,33 @@ async function v112_findTripForLogSync(p){
   return null;
 }
 
+
+function v112_focusMapOnLogSyncTrip(t){
+  try{
+    if(!t) return;
+    const a=Number(t.lat), b=Number(t.lng);
+    if(!validLatLng(a,b)) return;
+    const pos={
+      lat:a,
+      lng:b,
+      acc:v112_numOrNull(t.accuracy_m)||0,
+      t:v112_numOrNull(t.location_time_ms)||v112_numOrNull(t.date_ms)||v112_numOrNull(t.updated_ms)||Date.now(),
+      source:'pico_logsync'
+    };
+    currentPos=pos;
+    const latEl=$('latView'), lngEl=$('lngView'), accEl=$('accView'), timeEl=$('timeView'), st=$('locStatus');
+    if(latEl) latEl.textContent=pos.lat.toFixed(7);
+    if(lngEl) lngEl.textContent=pos.lng.toFixed(7);
+    if(accEl) accEl.textContent=pos.acc?`±${Math.round(pos.acc)}m`:'-';
+    if(timeEl) timeEl.textContent=fmtTime(pos.t);
+    if(st) st.textContent='Pico Wログ同期地点を表示しています。';
+    setBadge('locBadge','ログ地点',pos.acc>0&&pos.acc<=20?'good':'warn');
+    try{metaSet('last_pos',pos);}catch(e){}
+    try{drawCurrent(false);}catch(e){}
+    initialLakeViewDone=false;
+  }catch(e){}
+}
+
 function v112_makeTripFromLogSync(p){
   const gpsLat = Number(p.gps_lat || p.lat);
   const gpsLng = Number(p.gps_lng || p.lng);
@@ -675,6 +721,7 @@ async function v112_applyLogSyncPayload(p){
 
   await putTrip(t);
   selectedTripId = t.trip_id;
+  v112_focusMapOnLogSyncTrip(t);
 
   if(history && history.replaceState){
     history.replaceState(null, document.title, location.pathname + location.search);
@@ -683,12 +730,11 @@ async function v112_applyLogSyncPayload(p){
   await refreshAll();
 
   try{
-    showTripDetail(t, {lat:Number(t.lat), lng:Number(t.lng)});
-  }catch(e){}
-
-  try{
-    fitInitialLakeViewOnce(true);
-  }catch(e){}
+    await selectTrip(t.trip_id);
+  }catch(e){
+    try{ showTripDetail(t, {lat:Number(t.lat), lng:Number(t.lng)}); }catch(e2){}
+    try{ if(map) map.setView([Number(t.lat), Number(t.lng)], 18); }catch(e3){}
+  }
 
   v112_setLogSync('同期済み','good');
   return true;
