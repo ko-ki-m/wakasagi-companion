@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wakasagi Pico LogSync Receiver</title>
+<style>
+  body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:24px;background:#f8fafc;color:#0f172a;}
+  .box{max-width:720px;margin:auto;background:white;border:1px solid #cbd5e1;border-radius:16px;padding:18px;box-shadow:0 8px 24px rgba(15,23,42,.08);}
+  h1{font-size:20px;margin:0 0 12px;}
+  #status{font-size:16px;line-height:1.7;white-space:pre-wrap;}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>Wakasagi LogSync Receiver</h1>
+  <div id="status">保存準備中...</div>
+</div>
+<script>
+(function(){
+'use strict';
+
+const DB_NAME = 'wakasagi_trip_map_v10';
+const DB_VER = 1;
+const STORE_TRIPS = 'trip_records';
+const STORE_META = 'meta';
+
+function $(id){ return document.getElementById(id); }
+function status(t){ try{ $('status').textContent = String(t || ''); }catch(e){} }
+function s(v){ return String(v == null ? '' : v).trim(); }
+function n(v){ const x = Number(v); return Number.isFinite(x) ? x : null; }
+function nowMs(){ return Date.now(); }
+function genId(p){ return `${p}${Date.now().toString(36)}${Math.floor(Math.random()*0xfffff).toString(16).padStart(5,'0')}`; }
+function validLatLng(a,b){ return Number.isFinite(a)&&Number.isFinite(b)&&a>=-90&&a<=90&&b>=-180&&b<=180; }
+function hasLatLng(p){ return validLatLng(Number(p && (p.gps_lat || p.latest_lat || p.lat)), Number(p && (p.gps_lng || p.latest_lng || p.lng))); }
+function depthNum(v){ const x = Number(v); return (Number.isFinite(x) && x > 0) ? x : null; }
+function depthMaxText(){ let best = null; for(const v of arguments){ const x = depthNum(v); if(x === null) continue; if(best === null || x > best) best = x; } return best === null ? '' : best.toFixed(3); }
+function b64(obj){ return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))); }
+
+function decodeB64Json(raw){
+  const b64text = decodeURIComponent(String(raw || ''));
+  const bin = atob(b64text);
+  let json = '';
+  try{
+    json = decodeURIComponent(escape(bin));
+  }catch(e){
+    if(window.TextDecoder){
+      const bytes = new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+      json = new TextDecoder('utf-8').decode(bytes);
+    }else{
+      json = bin;
+    }
+  }
+  return JSON.parse(json);
+}
+
+function decodeLogSyncPayload(){
+  const h = String(location.hash || '');
+  if(!h.startsWith('#logsync=')) return null;
+  return decodeB64Json(h.substring('#logsync='.length));
+}
+
+function openDb(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = ()=>{
+      const d = req.result;
+      if(!d.objectStoreNames.contains(STORE_TRIPS)){
+        const st = d.createObjectStore(STORE_TRIPS,{keyPath:'trip_id'});
+        st.createIndex('date_ms','date_ms',{unique:false});
+      }
+      if(!d.objectStoreNames.contains(STORE_META)){
+        d.createObjectStore(STORE_META,{keyPath:'key'});
+      }
+    };
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error || new Error('IndexedDB open failed'));
+  });
+}
+
+function getAllTrips(db){
+  return new Promise(resolve=>{
+    try{
+      const r = db.transaction(STORE_TRIPS,'readonly').objectStore(STORE_TRIPS).getAll();
+      r.onsuccess = ()=>resolve(r.result || []);
+      r.onerror = ()=>resolve([]);
+    }catch(e){ resolve([]); }
+  });
+}
+
+function putTrip(db,t){
+  return new Promise(resolve=>{
+    try{
+      const tx = db.transaction(STORE_TRIPS,'readwrite');
+      tx.objectStore(STORE_TRIPS).put(t);
+      tx.oncomplete = ()=>resolve(true);
+      tx.onerror = ()=>resolve(false);
+    }catch(e){ resolve(false); }
+  });
+}
+
+function makeSummary(p){
+  const x = {
+    v:1,
+    source:'pico_log',
+    sid:s(p.sid),
+    point_visit_id:s(p.point_visit_id || p.map_point_key),
+    map_point_key:s(p.map_point_key || p.point_visit_id),
+    map_spot_id:s(p.map_spot_id || p.spot_id),
+    point_start_seq:p.point_start_seq === undefined ? '' : p.point_start_seq,
+    point_last_seq:p.point_last_seq === undefined ? '' : p.point_last_seq,
+    start_ms:n(p.start_ms) || 0,
+    updated_ms:n(p.updated_ms) || Date.now(),
+    first_recv_ms:n(p.first_recv_ms) || 0,
+    last_recv_ms:n(p.last_recv_ms) || 0,
+    fish_count:n(p.fish_count) || 0,
+    mark_count:n(p.mark_count) || 0,
+    tlog_count:n(p.tlog_count) || 0,
+    first_seq:p.first_seq === undefined ? '' : p.first_seq,
+    last_seq:p.last_seq === undefined ? '' : p.last_seq,
+    first_t_ms:p.first_t_ms === undefined ? '' : p.first_t_ms,
+    last_t_ms:p.last_t_ms === undefined ? '' : p.last_t_ms,
+    min_depth_m:p.min_depth_m === undefined ? '' : s(p.min_depth_m),
+    max_depth_m:p.max_depth_m === undefined ? '' : s(p.max_depth_m),
+    depth_source:p.depth_source === undefined ? '' : s(p.depth_source),
+    depth_status:p.depth_status === undefined ? '' : s(p.depth_status),
+    depth_measured:p.depth_measured === undefined ? '' : s(p.depth_measured),
+    used_sasoi:p.used_sasoi === undefined ? '' : s(p.used_sasoi),
+    used_speed:p.used_speed === undefined ? '' : s(p.used_speed),
+    received_ms:Date.now()
+  };
+  if(p.gps_visit_id || p.visit_id) x.gps_visit_id = s(p.gps_visit_id || p.visit_id);
+  if(p.pico_point_visit_id) x.pico_point_visit_id = s(p.pico_point_visit_id);
+  return x;
+}
+
+async function findTripForPayload(db,p){
+  const trips = await getAllTrips(db);
+  const visitKey = s(p.gps_visit_id || p.visit_id);
+  const pointKey = s(p.point_visit_id || p.map_point_key);
+  const sid = s(p.sid);
+
+  if(visitKey){
+    for(const t of trips){
+      if(s(t.gps_visit_id) === visitKey) return t;
+      if(t.pico_summary && s(t.pico_summary.gps_visit_id) === visitKey) return t;
+      if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => s(l.gps_visit_id) === visitKey)) return t;
+    }
+    return null;
+  }
+
+  if(pointKey){
+    for(const t of trips){
+      if(s(t.point_visit_id) === pointKey) return t;
+      if(s(t.map_point_key) === pointKey) return t;
+      if(t.pico_summary && s(t.pico_summary.point_visit_id || t.pico_summary.map_point_key) === pointKey) return t;
+      if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => s(l.point_visit_id || l.map_point_key) === pointKey)) return t;
+    }
+  }
+
+  if(!pointKey && sid){
+    for(const t of trips){
+      if(s(t.pico_sid) === sid) return t;
+      if(t.pico_summary && s(t.pico_summary.sid) === sid) return t;
+      if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => s(l.sid) === sid)) return t;
+    }
+  }
+
+  return null;
+}
+
+function makeTripFromPayload(p){
+  const gpsLat = Number(p.gps_lat || p.lat);
+  const gpsLng = Number(p.gps_lng || p.lng);
+  const now = nowMs();
+  const sid = s(p.sid);
+  const visitKey = s(p.gps_visit_id || p.visit_id);
+  const pointKey = s(p.point_visit_id || p.map_point_key);
+  const depth = depthMaxText(p.fishfinder_depth_m, p.max_depth_m, p.fishfinder_m, p.water_depth_m);
+
+  const t = {
+    trip_id:genId('T'),
+    pico_sid:sid,
+    point_visit_id:visitKey ? '' : pointKey,
+    map_point_key:visitKey ? '' : pointKey,
+    map_spot_id:s(p.map_spot_id || p.spot_id),
+    date_ms:n(p.start_ms) || n(p.first_recv_ms) || n(p.visit_start_ms) || now,
+    lat:Number.isFinite(gpsLat) ? gpsLat : 0,
+    lng:Number.isFinite(gpsLng) ? gpsLng : 0,
+    accuracy_m:n(p.gps_acc_m || p.acc) || 0,
+    location_time_ms:n(p.visit_start_ms) || n(p.gps_ms) || n(p.start_ms) || now,
+    lake_name:s(p.lake_name),
+    point_name:s(p.point_name || p.place_name || (visitKey ? 'Pico W実釣地点' : 'Pico Wログ地点')),
+    line_no:s(p.line_no),
+    sinker_g:s(p.sinker_g),
+    fishfinder_depth_m:depth,
+    depth_status:depth ? 'measured' : 'not_measured',
+    depth_last_sync_ms:now,
+    water_temp_c:s(p.water_temp_c),
+    weather:s(p.weather_text || p.weather),
+    wind:s(p.wind_dir || p.wind),
+    memo:s(p.note),
+    pico_logs:[],
+    created_ms:now,
+    updated_ms:now
+  };
+
+  if(visitKey){
+    t.gps_visit_id = visitKey;
+    t.pico_point_visit_id = s(p.pico_point_visit_id || p.point_visit_id || p.map_point_key);
+  }
+
+  return t;
+}
+
+function mergeVisitPayload(parent,visit){
+  const p = Object.assign({}, parent || {}, visit || {});
+  p.__stage2_single_visit = true;
+  p.sid = s((parent && parent.sid) || (visit && visit.sid));
+  const fallbackKeys = ['lake_name','point_name','place_name','line_no','sinker_g','water_temp_c','weather_text','weather','wind_dir','wind_speed_mps','wind','note','map_source'];
+  for(const k of fallbackKeys){
+    if(!s(p[k]) && parent && parent[k] !== undefined) p[k] = parent[k];
+  }
+  p.gps_visit_id = s(visit && (visit.gps_visit_id || visit.visit_id));
+  p.pico_point_visit_id = s((visit && visit.pico_point_visit_id) || (parent && (parent.point_visit_id || parent.map_point_key || parent.pico_point_visit_id)));
+  p.gps_lat = s((visit && (visit.gps_lat || visit.latest_lat || visit.lat)) || p.gps_lat || p.lat);
+  p.gps_lng = s((visit && (visit.gps_lng || visit.latest_lng || visit.lng)) || p.gps_lng || p.lng);
+  p.gps_acc_m = s((visit && (visit.gps_acc_m || visit.acc_m || visit.acc)) || p.gps_acc_m || p.acc);
+  p.point_visit_id = '';
+  p.map_point_key = '';
+  const depth = depthMaxText(p.fishfinder_depth_m, p.max_depth_m, p.fishfinder_m, p.water_depth_m);
+  p.fishfinder_depth_m = depth;
+  p.water_depth_m = depth;
+  p.depth_status = depth ? 'measured' : 'not_measured';
+  return p;
+}
+
+async function applySinglePayload(db,p){
+  const sid = s(p.sid);
+  if(!sid) return null;
+
+  const lat = Number(p.gps_lat || p.lat);
+  const lng = Number(p.gps_lng || p.lng);
+  if(!validLatLng(lat,lng)) return null;
+
+  const now = nowMs();
+  const visitKey = s(p.gps_visit_id || p.visit_id);
+  const pointKey = s(p.point_visit_id || p.map_point_key);
+  const summary = makeSummary(p);
+  let t = await findTripForPayload(db,p);
+  if(!t) t = makeTripFromPayload(p);
+
+  t.pico_sid = sid;
+  if(visitKey){
+    t.gps_visit_id = visitKey;
+    t.pico_point_visit_id = s(t.pico_point_visit_id || p.pico_point_visit_id || p.point_visit_id || p.map_point_key);
+    t.point_visit_id = '';
+    t.map_point_key = '';
+  }else{
+    t.point_visit_id = s(t.point_visit_id || pointKey);
+    t.map_point_key = s(t.map_point_key || pointKey);
+  }
+  t.map_spot_id = s(t.map_spot_id || p.map_spot_id || p.spot_id);
+
+  if(!s(t.lake_name) && p.lake_name) t.lake_name = s(p.lake_name);
+  if(!s(t.point_name) && (p.point_name || p.place_name)) t.point_name = s(p.point_name || p.place_name);
+  if(!s(t.line_no) && p.line_no) t.line_no = s(p.line_no);
+  if(!s(t.sinker_g) && p.sinker_g) t.sinker_g = s(p.sinker_g);
+  if(!s(t.water_temp_c) && p.water_temp_c) t.water_temp_c = s(p.water_temp_c);
+  if(!s(t.weather) && (p.weather_text || p.weather)) t.weather = s(p.weather_text || p.weather);
+  if(!s(t.wind) && (p.wind_dir || p.wind)) t.wind = s(p.wind_dir || p.wind);
+  if(!s(t.memo) && p.note) t.memo = s(p.note);
+
+  const incomingDepth = depthMaxText(p.fishfinder_depth_m, p.max_depth_m, p.fishfinder_m, p.water_depth_m);
+  const mergedDepth = depthMaxText(t.fishfinder_depth_m, incomingDepth);
+  if(incomingDepth){
+    t.fishfinder_depth_m = mergedDepth;
+    t.depth_status = 'measured';
+  }else if(!s(t.fishfinder_depth_m)){
+    t.depth_status = 'not_measured';
+  }
+  t.depth_last_sync_ms = now;
+
+  t.pico_logs = Array.isArray(t.pico_logs) ? t.pico_logs : [];
+  if(visitKey){
+    t.pico_logs = t.pico_logs.filter(x => s(x.gps_visit_id) !== visitKey);
+  }else{
+    t.pico_logs = t.pico_logs.filter(x => s(x.point_visit_id || x.map_point_key) !== pointKey);
+  }
+  t.pico_logs.push(summary);
+  t.pico_summary = summary;
+  t.updated_ms = now;
+
+  const ok = await putTrip(db,t);
+  return ok ? {trip_id:t.trip_id, gps_visit_id:visitKey, point_visit_id:pointKey} : null;
+}
+
+async function applyPayload(db,p){
+  const hasGpsCandidateSource = Number(p.gps_candidate_count || 0) > 0 || (Array.isArray(p.gps_candidates) && p.gps_candidates.length > 0);
+  if(p.gps_visit_judged && hasGpsCandidateSource && Array.isArray(p.gps_visit_candidates) && !p.__stage2_single_visit){
+    const visits = p.gps_visit_candidates.filter(v => v && s(v.gps_visit_id || v.visit_id) && hasLatLng(v));
+    if(!visits.length) return [];
+    const saved = [];
+    for(const v of visits){
+      const one = mergeVisitPayload(p,v);
+      const r = await applySinglePayload(db,one);
+      if(r) saved.push(r);
+    }
+    return saved;
+  }
+  const r = await applySinglePayload(db,p);
+  return r ? [r] : [];
+}
+
+function returnToPico(p,result){
+  const ret = s(p && (p.auto_return_url || p.return_url || p.pico));
+  if(!ret){
+    status('保存結果: ' + JSON.stringify(result));
+    return;
+  }
+  const base = ret.split('#')[0];
+  location.replace(base + '#autologsync=' + encodeURIComponent(b64(result)));
+}
+
+async function main(){
+  let payload = null;
+  try{
+    payload = decodeLogSyncPayload();
+    if(!payload) throw new Error('logsync payloadなし');
+    status('保存中...');
+    const db = await openDb();
+    const saved = await applyPayload(db,payload);
+    const visitIds = saved.map(x => s(x.gps_visit_id)).filter(Boolean);
+    const result = {
+      ok:saved.length > 0 ? 1 : 0,
+      sid:s(payload.sid),
+      last_seq:n(payload.last_seq || payload.point_last_seq || payload.auto_return_seq) || 0,
+      saved:saved.length,
+      visit_ids:visitIds,
+      ms:Date.now()
+    };
+    status(saved.length ? ('保存済み: ' + saved.length + '件') : '保存対象なし');
+    setTimeout(()=>returnToPico(payload,result),350);
+  }catch(e){
+    const result = {
+      ok:0,
+      sid:s(payload && payload.sid),
+      last_seq:n(payload && (payload.last_seq || payload.point_last_seq || payload.auto_return_seq)) || 0,
+      saved:0,
+      visit_ids:[],
+      error:String(e && e.message ? e.message : e),
+      ms:Date.now()
+    };
+    status('保存失敗: ' + result.error);
+    if(payload) setTimeout(()=>returnToPico(payload,result),800);
+  }
+}
+
+main();
+})();
+</script>
+</body>
+</html>
