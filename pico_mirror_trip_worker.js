@@ -1,12 +1,13 @@
 'use strict';
 
-const VERSION = 'pico_mirror_trip_worker_20260610l';
+const VERSION = 'pico_mirror_trip_worker_20260610m';
 const TRIP_DB_NAME = 'wakasagi_trip_map_v10';
 const STORE_TRIPS = 'trip_records';
 const MIRROR_DB_NAME = 'wakasagi_pico_mirror_v1';
-const MIRROR_DB_VER = 1;
+const MIRROR_DB_VER = 2;
 const STORE_CANDIDATES = 'gps_candidates';
 const STORE_ACTIVITY = 'activity_rows';
+const STORE_SESSION = 'session_meta';
 let tripDb = null;
 let mirrorDb = null;
 let rebuildTimers = Object.create(null);
@@ -74,6 +75,9 @@ function openMirrorDb(){
         const st = d.createObjectStore(STORE_ACTIVITY, {keyPath:'key'});
         st.createIndex('sid', 'sid', {unique:false});
       }
+      if(!d.objectStoreNames.contains(STORE_SESSION)){
+        d.createObjectStore(STORE_SESSION, {keyPath:'sid'});
+      }
     };
     req.onsuccess = () => {
       mirrorDb = req.result;
@@ -135,6 +139,53 @@ function getAllBySid(storeName, sid){
   });
 }
 
+function getSessionMeta(sid){
+  return new Promise(resolve=>{
+    try{
+      if(!mirrorDb || !sid || !mirrorDb.objectStoreNames.contains(STORE_SESSION)){
+        resolve(null);
+        return;
+      }
+      const tx = mirrorDb.transaction(STORE_SESSION, 'readonly');
+      const req = tx.objectStore(STORE_SESSION).get(sid);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    }catch(e){ resolve(null); }
+  });
+}
+
+function normalizeSessionMeta(data){
+  const m = data && data.session_meta ? data.session_meta : null;
+  const sidVal = s((data && data.sid) || (m && m.sid));
+  if(!sidVal) return null;
+  return {
+    sid:sidVal,
+    updated_ms:n(m && m.updated_ms) || n(data && data.sent_ms) || now(),
+    lake_name:s(m && (m.lake_name || m.lake)),
+    place_name:s(m && m.place_name),
+    line_no:s(m && m.line_no),
+    sinker_g:s(m && m.sinker_g),
+    fishfinder_m:s(m && m.fishfinder_m),
+    water_temp_c:s(m && m.water_temp_c),
+    weather_text:s(m && (m.weather_text || m.weather)),
+    weather:s(m && (m.weather || m.weather_text)),
+    wind_dir:s(m && m.wind_dir),
+    wind_speed_mps:s(m && m.wind_speed_mps),
+    wind:s(m && m.wind),
+    note:s(m && m.note),
+    map_spot_id:s(m && m.map_spot_id),
+    map_source:s(m && m.map_source)
+  };
+}
+
+async function saveSessionMeta(data){
+  const m = normalizeSessionMeta(data);
+  if(!m) return null;
+  await openMirrorDb();
+  await txPut(mirrorDb, STORE_SESSION, m);
+  return m;
+}
+
 function normalizeCandidate(data){
   const c = data && (data.candidate || data.gps || data);
   const sidVal = s((data && data.sid) || (c && c.sid));
@@ -185,7 +236,10 @@ function normalizeActivityRow(data, row){
     depth_mm:Number(row && row.depth_mm || 0) || 0,
     motorRun:Number(row && row.motorRun || 0) || 0,
     pulse:Number(row && row.pulse || 0) || 0,
-    event:Number(row && row.event || 0) || 0
+    event:Number(row && row.event || 0) || 0,
+    sinker_g_x10:Number(row && row.sinker_g_x10 || 0) || 0,
+    speedLevel:Number(row && row.speedLevel || 0) || 0,
+    sasoiType:Number(row && row.sasoiType || 0) || 0
   };
 }
 
@@ -193,6 +247,7 @@ async function saveActivityRows(data){
   const rows = Array.isArray(data && data.activity_rows) ? data.activity_rows : [];
   if(!rows.length) return;
   await openMirrorDb();
+  await saveSessionMeta(data);
   let sidVal = s(data && data.sid);
   for(const r of rows){
     const row = normalizeActivityRow(data, r);
@@ -207,6 +262,7 @@ async function saveCandidate(data){
   const c = normalizeCandidate(data);
   if(!c) return;
   await openMirrorDb();
+  await saveSessionMeta(data);
   await txPut(mirrorDb, STORE_CANDIDATES, c);
   scheduleRebuild(c.sid, 1200);
 }
@@ -232,9 +288,11 @@ function statsFromRows(rows){
   const fishCount = events.filter(e => e === 1).length;
   const first = rows[0] || null;
   const last = rows[rows.length - 1] || null;
+  const sinkerX10 = rows.map(r => Number(r.sinker_g_x10 || 0) || 0).filter(x => x > 0).pop() || 0;
   return {
     tlog_count:rows.length,
     fish_count:fishCount,
+    sinker_g_x10:sinkerX10,
     first_seq:first ? Number(first.seq || 0) : 0,
     last_seq:last ? Number(last.seq || 0) : 0,
     first_t_ms:first ? Number(first.t_ms || 0) : 0,
@@ -246,7 +304,8 @@ function statsFromRows(rows){
   };
 }
 
-function makeTripFromCandidate(c, rows, existing){
+function makeTripFromCandidate(c, rows, existing, sessionMeta){
+  const meta = sessionMeta || {};
   const nowMs = now();
   const lat = Number(c.gps_lat);
   const lng = Number(c.gps_lng);
@@ -263,7 +322,30 @@ function makeTripFromCandidate(c, rows, existing){
   t.lng = Number.isFinite(lng) ? lng : Number(t.lng || 0);
   t.accuracy_m = n(c.gps_acc_m) || Number(t.accuracy_m || 0);
   t.location_time_ms = n(c.start_ms) || st.first_recv_ms || t.location_time_ms || nowMs;
+  if(s(meta.lake_name)) t.lake_name = meta.lake_name;
+  if(s(meta.place_name)) t.point_name = meta.place_name;
   if(!s(t.point_name)) t.point_name = 'Pico W実釣地点';
+  if(s(meta.line_no)) t.line_no = meta.line_no;
+  if(s(meta.sinker_g)){
+    t.sinker_g = meta.sinker_g;
+  }else if(st.sinker_g_x10 > 0){
+    t.sinker_g = String((st.sinker_g_x10 / 10).toFixed(1)).replace(/\.0$/, '');
+  }
+  if(s(meta.water_temp_c)) t.water_temp_c = meta.water_temp_c;
+  if(s(meta.weather_text) || s(meta.weather)){
+    t.weather = s(meta.weather_text || meta.weather);
+    t.weather_text = s(meta.weather_text || meta.weather);
+  }
+  if(s(meta.wind)){
+    t.wind = meta.wind;
+  }else if(s(meta.wind_dir) || s(meta.wind_speed_mps)){
+    t.wind = [s(meta.wind_dir), s(meta.wind_speed_mps) ? (s(meta.wind_speed_mps) + 'm/s') : ''].filter(Boolean).join(' ');
+  }
+  if(s(meta.wind_dir)) t.wind_dir = meta.wind_dir;
+  if(s(meta.wind_speed_mps)) t.wind_speed_mps = meta.wind_speed_mps;
+  if(s(meta.note)) t.memo = meta.note;
+  if(s(meta.map_spot_id)) t.map_spot_id = meta.map_spot_id;
+  if(s(meta.map_source)) t.map_source = meta.map_source;
   t.fish_count = Number(t.fish_count || 0) || st.fish_count || 0;
   if(st.max_depth_m > 0){
     t.fishfinder_depth_m = String(st.max_depth_m.toFixed(3));
@@ -297,6 +379,13 @@ function makeTripFromCandidate(c, rows, existing){
     max_depth_m:st.max_depth_m ? st.max_depth_m.toFixed(3) : '',
     gps_quality:c.gps_quality,
     gps_quality_label:c.gps_quality_label,
+    lake_name:s(meta.lake_name),
+    place_name:s(meta.place_name),
+    line_no:s(meta.line_no),
+    sinker_g:s(t.sinker_g || meta.sinker_g),
+    weather:s(meta.weather_text || meta.weather),
+    wind:s(t.wind || meta.wind),
+    note:s(meta.note),
     received_ms:nowMs
   };
 
@@ -323,12 +412,13 @@ async function rebuildSid(sid){
   await openTripDb();
   const candidates = await getAllBySid(STORE_CANDIDATES, sid);
   const rows = await getAllBySid(STORE_ACTIVITY, sid);
+  const sessionMeta = await getSessionMeta(sid) || {};
   if(!candidates.length) return;
   for(const c of candidates){
     const cr = rowsForCandidate(rows, c);
     if(!cr.length) continue;
     const existing = await getTrip(c.trip_id);
-    const trip = makeTripFromCandidate(c, cr, existing);
+    const trip = makeTripFromCandidate(c, cr, existing, sessionMeta);
     await putTrip(trip);
   }
 }
