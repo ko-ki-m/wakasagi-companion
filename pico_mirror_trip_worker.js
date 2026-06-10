@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSION = 'pico_mirror_trip_worker_20260610m';
+const VERSION = 'pico_mirror_trip_worker_20260610n';
 const TRIP_DB_NAME = 'wakasagi_trip_map_v10';
 const STORE_TRIPS = 'trip_records';
 const MIRROR_DB_NAME = 'wakasagi_pico_mirror_v1';
@@ -18,6 +18,173 @@ function n(v){ const x = finiteNumber(v); return x === null ? 0 : x; }
 function now(){ return Date.now(); }
 function safeKey(v){ return s(v).replace(/[^A-Za-z0-9_\-:.]/g, '_').slice(0, 120); }
 function sidKey(sid){ return safeKey(sid || 'nosid'); }
+
+
+const LAKE_INDEX_URL = './viewer/lakes/index.json';
+const LAKE_FILE_BASE = './viewer/lakes/';
+let lakeIndexCache = null;
+const lakePrefCache = Object.create(null);
+
+function validLatLng(a,b){
+  return Number.isFinite(a) && Number.isFinite(b) && a >= -90 && a <= 90 && b >= -180 && b <= 180;
+}
+
+async function fetchJson(url){
+  const res = await fetch(url, {cache:'force-cache'});
+  if(!res || !res.ok) throw new Error('fetch failed: ' + url);
+  return await res.json();
+}
+
+async function loadLakeIndex(){
+  if(lakeIndexCache) return lakeIndexCache;
+  lakeIndexCache = await fetchJson(LAKE_INDEX_URL);
+  return Array.isArray(lakeIndexCache) ? lakeIndexCache : [];
+}
+
+async function loadLakePrefFile(file){
+  const f = s(file);
+  if(!f) return [];
+  if(lakePrefCache[f]) return lakePrefCache[f];
+  const data = await fetchJson(LAKE_FILE_BASE + f);
+  lakePrefCache[f] = Array.isArray(data) ? data : [];
+  return lakePrefCache[f];
+}
+
+function inBboxLngLat(lng, lat, bbox, marginDeg){
+  if(!Array.isArray(bbox) || bbox.length < 4) return false;
+  const m = Number(marginDeg || 0);
+  return lng >= Number(bbox[0]) - m && lat >= Number(bbox[1]) - m && lng <= Number(bbox[2]) + m && lat <= Number(bbox[3]) + m;
+}
+
+function pointInRing(lng, lat, ring){
+  if(!Array.isArray(ring) || ring.length < 3) return false;
+  let inside = false;
+  for(let i=0, j=ring.length-1; i<ring.length; j=i++){
+    const pi = ring[i] || [];
+    const pj = ring[j] || [];
+    const xi = Number(pi[0]), yi = Number(pi[1]);
+    const xj = Number(pj[0]), yj = Number(pj[1]);
+    if(!Number.isFinite(xi) || !Number.isFinite(yi) || !Number.isFinite(xj) || !Number.isFinite(yj)) continue;
+    const intersect = ((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi);
+    if(intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function pointInPolygon(lng, lat, polygonCoords){
+  if(!Array.isArray(polygonCoords) || !polygonCoords.length) return false;
+  if(!pointInRing(lng, lat, polygonCoords[0])) return false;
+  for(let i=1; i<polygonCoords.length; i++){
+    if(pointInRing(lng, lat, polygonCoords[i])) return false;
+  }
+  return true;
+}
+
+function pointInGeometry(lng, lat, geom){
+  if(!geom || !geom.type) return false;
+  if(geom.type === 'Polygon') return pointInPolygon(lng, lat, geom.coordinates || []);
+  if(geom.type === 'MultiPolygon'){
+    const polys = geom.coordinates || [];
+    for(const poly of polys){ if(pointInPolygon(lng, lat, poly)) return true; }
+  }
+  return false;
+}
+
+function distanceMetersLatLng(lat1, lng1, lat2, lng2){
+  const R = 6371008.8;
+  const p1 = lat1 * Math.PI / 180;
+  const p2 = lat2 * Math.PI / 180;
+  const dp = (lat2 - lat1) * Math.PI / 180;
+  const dl = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dp/2) * Math.sin(dp/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function pointToSegmentDistanceMeters(lat, lng, lat1, lng1, lat2, lng2){
+  const R = 6371008.8;
+  const baseLatRad = lat * Math.PI / 180;
+  function xOf(lon){ return (lon - lng) * Math.PI / 180 * Math.cos(baseLatRad) * R; }
+  function yOf(la){ return (la - lat) * Math.PI / 180 * R; }
+  const ax = xOf(lng1), ay = yOf(lat1);
+  const bx = xOf(lng2), by = yOf(lat2);
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx*dx + dy*dy;
+  if(len2 <= 1e-9) return Math.sqrt(ax*ax + ay*ay);
+  let t = -(ax*dx + ay*dy) / len2;
+  if(t < 0) t = 0;
+  if(t > 1) t = 1;
+  const cx = ax + t*dx;
+  const cy = ay + t*dy;
+  return Math.sqrt(cx*cx + cy*cy);
+}
+
+function ringDistanceMeters(lat, lng, ring){
+  if(!Array.isArray(ring) || ring.length < 2) return Infinity;
+  let best = Infinity;
+  for(let i=1; i<ring.length; i++){
+    const a = ring[i-1] || [];
+    const b = ring[i] || [];
+    const d = pointToSegmentDistanceMeters(lat, lng, Number(a[1]), Number(a[0]), Number(b[1]), Number(b[0]));
+    if(Number.isFinite(d) && d < best) best = d;
+  }
+  return best;
+}
+
+function polygonDistanceMeters(lat, lng, polygonCoords){
+  if(pointInPolygon(lng, lat, polygonCoords)) return 0;
+  let best = Infinity;
+  for(const ring of (polygonCoords || [])){
+    const d = ringDistanceMeters(lat, lng, ring);
+    if(d < best) best = d;
+  }
+  return best;
+}
+
+function geometryDistanceMeters(lat, lng, geom){
+  if(!geom || !geom.type) return Infinity;
+  if(geom.type === 'Polygon') return polygonDistanceMeters(lat, lng, geom.coordinates || []);
+  if(geom.type === 'MultiPolygon'){
+    let best = Infinity;
+    for(const poly of (geom.coordinates || [])){
+      const d = polygonDistanceMeters(lat, lng, poly);
+      if(d < best) best = d;
+    }
+    return best;
+  }
+  return Infinity;
+}
+
+async function guessLakeNameFromLatLng(latVal, lngVal){
+  const lat = Number(latVal), lng = Number(lngVal);
+  if(!validLatLng(lat, lng)) return null;
+  try{
+    const marginDeg = 0.02;
+    const nearLimitM = 300;
+    const index = await loadLakeIndex();
+    const candidates = index.filter(lake => lake && inBboxLngLat(lng, lat, lake.bbox, marginDeg) && s(lake.file));
+    if(!candidates.length) return null;
+    const files = Array.from(new Set(candidates.map(c => s(c.file)).filter(Boolean)));
+    let nearest = null;
+    for(const file of files){
+      const lakes = await loadLakePrefFile(file);
+      for(const lake of lakes){
+        if(!lake || !inBboxLngLat(lng, lat, lake.bbox, marginDeg)) continue;
+        if(pointInGeometry(lng, lat, lake.geometry)){
+          return {lake_name:s(lake.name), lake_source:'ksj_w09_polygon', lake_confidence:1.0};
+        }
+        const d = geometryDistanceMeters(lat, lng, lake.geometry);
+        if(Number.isFinite(d) && d <= nearLimitM){
+          if(!nearest || d < nearest.distance_m){
+            nearest = {lake_name:s(lake.name), lake_source:'ksj_w09_near', lake_confidence:0.7, distance_m:d};
+          }
+        }
+      }
+    }
+    return nearest;
+  }catch(e){
+    return null;
+  }
+}
 
 function openTripDb(){
   return new Promise((resolve, reject)=>{
@@ -304,8 +471,10 @@ function statsFromRows(rows){
   };
 }
 
-function makeTripFromCandidate(c, rows, existing, sessionMeta){
+function makeTripFromCandidate(c, rows, existing, sessionMeta, lakeGuess){
   const meta = sessionMeta || {};
+  const lake = lakeGuess || null;
+  const lakeName = s(meta.lake_name) || s(lake && lake.lake_name);
   const nowMs = now();
   const lat = Number(c.gps_lat);
   const lng = Number(c.gps_lng);
@@ -322,7 +491,10 @@ function makeTripFromCandidate(c, rows, existing, sessionMeta){
   t.lng = Number.isFinite(lng) ? lng : Number(t.lng || 0);
   t.accuracy_m = n(c.gps_acc_m) || Number(t.accuracy_m || 0);
   t.location_time_ms = n(c.start_ms) || st.first_recv_ms || t.location_time_ms || nowMs;
-  if(s(meta.lake_name)) t.lake_name = meta.lake_name;
+  if(lakeName) t.lake_name = lakeName;
+  if(lake && s(lake.lake_source)) t.lake_source = s(lake.lake_source);
+  if(lake && Number.isFinite(Number(lake.lake_confidence))) t.lake_confidence = Number(lake.lake_confidence);
+  if(lake && Number.isFinite(Number(lake.distance_m))) t.lake_distance_m = Number(lake.distance_m);
   if(s(meta.place_name)) t.point_name = meta.place_name;
   if(!s(t.point_name)) t.point_name = 'Pico W実釣地点';
   if(s(meta.line_no)) t.line_no = meta.line_no;
@@ -379,7 +551,7 @@ function makeTripFromCandidate(c, rows, existing, sessionMeta){
     max_depth_m:st.max_depth_m ? st.max_depth_m.toFixed(3) : '',
     gps_quality:c.gps_quality,
     gps_quality_label:c.gps_quality_label,
-    lake_name:s(meta.lake_name),
+    lake_name:lakeName,
     place_name:s(meta.place_name),
     line_no:s(meta.line_no),
     sinker_g:s(t.sinker_g || meta.sinker_g),
@@ -418,7 +590,8 @@ async function rebuildSid(sid){
     const cr = rowsForCandidate(rows, c);
     if(!cr.length) continue;
     const existing = await getTrip(c.trip_id);
-    const trip = makeTripFromCandidate(c, cr, existing, sessionMeta);
+    const lakeGuess = s(sessionMeta.lake_name) ? null : await guessLakeNameFromLatLng(Number(c.gps_lat), Number(c.gps_lng));
+    const trip = makeTripFromCandidate(c, cr, existing, sessionMeta, lakeGuess);
     await putTrip(trip);
   }
 }

@@ -1,7 +1,7 @@
 (()=>{
   'use strict';
 
-  const VERSION = 'pico_mirror_trip_writer_20260610m';
+  const VERSION = 'pico_mirror_trip_writer_20260610n';
   const qs = new URLSearchParams(location.search);
   const allowedPicoOrigin = String(qs.get('pico') || '').trim();
   let worker = null;
@@ -15,7 +15,7 @@
   function ensureWorker(){
     if(worker || workerFailed) return worker;
     try{
-      worker = new Worker('./pico_mirror_trip_worker.js?v=20260610m');
+      worker = new Worker('./pico_mirror_trip_worker.js?v=20260610n');
       worker.onerror = function(){
         workerFailed = true;
         try{ worker.terminate(); }catch(e){}
