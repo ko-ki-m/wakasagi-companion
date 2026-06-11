@@ -139,42 +139,11 @@
     return p;
   }
 
-
-  function hasFishingEvidence(p){
-    if(!p) return false;
-    if(s(p.activity_reason)) return true;
-    const keys = [
-      'motor_count','pulse_count','fishing_event_count','fish_count','depth_range_mm',
-      'tlog_count','first_seq','last_seq','first_recv_ms','last_recv_ms'
-    ];
-    for(const k of keys){
-      const x = n(p[k]);
-      if(x !== null && x > 0) return true;
-    }
-    return false;
-  }
-
-  function isVisitPayloadSafe(v){
-    return !!(v && s(v.gps_visit_id || v.visit_id) && hasLatLng(v) && hasFishingEvidence(v));
-  }
-
   async function stage2ApplyLogSyncPayload(p){
     if(!p || p.__error) return await originalApply.call(this, p);
-
-    if(p.__stage2_single_visit){
-      if(!isVisitPayloadSafe(p)){
-        setLogSync('実釣なし: 保存なし','warn');
-        return false;
-      }
-      return await originalApply.call(this, p);
-    }
-
     const hasGpsCandidateSource = Number(p.gps_candidate_count || 0) > 0 || (Array.isArray(p.gps_candidates) && p.gps_candidates.length > 0);
-    const hasVisitList = Array.isArray(p.gps_visit_candidates);
-    const judged = !!(Number(p.gps_visit_judged || 0) > 0 || hasGpsCandidateSource || hasVisitList);
-
-    if(judged){
-      const visits = (hasVisitList ? p.gps_visit_candidates : []).filter(isVisitPayloadSafe);
+    if(p.gps_visit_judged && hasGpsCandidateSource && Array.isArray(p.gps_visit_candidates) && !p.__stage2_single_visit){
+      const visits = p.gps_visit_candidates.filter(v => v && s(v.gps_visit_id || v.visit_id) && hasLatLng(v));
       if(!visits.length){
         clearLogSyncHash();
         try{ if(typeof refreshAll === 'function') await refreshAll(); }catch(e){}
@@ -192,14 +161,12 @@
       setLogSync('実釣' + saved + '地点同期','good');
       return saved > 0;
     }
-
-    setLogSync('実釣なし: 保存なし','warn');
-    return false;
+    return await originalApply.call(this, p);
   }
 
   try{ window.v112_findTripForLogSync = stage2FindTripForLogSync; v112_findTripForLogSync = stage2FindTripForLogSync; }catch(e){}
   try{ window.v112_makeTripFromLogSync = stage2MakeTripFromLogSync; v112_makeTripFromLogSync = stage2MakeTripFromLogSync; }catch(e){}
   try{ window.v112_makePicoSummary = stage2MakePicoSummary; v112_makePicoSummary = stage2MakePicoSummary; }catch(e){}
   try{ window.v112_applyLogSyncPayload = stage2ApplyLogSyncPayload; v112_applyLogSyncPayload = stage2ApplyLogSyncPayload; }catch(e){}
-  console.info('[wakasagi] stage2 visit receiver 20260611b installed - activity gate enforced');
+  console.info('[wakasagi] stage2 visit receiver 20260611c installed - env/time fields kept, no extra activity gate');
 })();
