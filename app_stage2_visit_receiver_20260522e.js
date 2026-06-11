@@ -141,15 +141,32 @@
 
   async function stage2ApplyLogSyncPayload(p){
     if(!p || p.__error) return await originalApply.call(this, p);
-    const hasGpsCandidateSource = Number(p.gps_candidate_count || 0) > 0 || (Array.isArray(p.gps_candidates) && p.gps_candidates.length > 0);
-    if(p.gps_visit_judged && hasGpsCandidateSource && Array.isArray(p.gps_visit_candidates) && !p.__stage2_single_visit){
-      const visits = p.gps_visit_candidates.filter(v => v && s(v.gps_visit_id || v.visit_id) && hasLatLng(v));
+
+    if(p.__stage2_single_visit){
+      return await originalApply.call(this, p);
+    }
+
+    const fromPicoLog = !!(
+      s(p.source) === 'pico_log_summary' ||
+      s(p.sid) ||
+      Array.isArray(p.gps_visit_candidates) ||
+      Array.isArray(p.gps_candidates) ||
+      Number(p.gps_candidate_count || 0) > 0 ||
+      Number(p.gps_visit_judged || 0) > 0
+    );
+
+    if(fromPicoLog){
+      const visits = Array.isArray(p.gps_visit_candidates)
+        ? p.gps_visit_candidates.filter(v => v && s(v.gps_visit_id || v.visit_id) && hasLatLng(v))
+        : [];
+
       if(!visits.length){
         clearLogSyncHash();
         try{ if(typeof refreshAll === 'function') await refreshAll(); }catch(e){}
         setLogSync('実釣なし: 保存なし','warn');
         return false;
       }
+
       let saved = 0;
       for(const v of visits){
         const one = mergeVisitPayload(p, v);
@@ -161,6 +178,7 @@
       setLogSync('実釣' + saved + '地点同期','good');
       return saved > 0;
     }
+
     return await originalApply.call(this, p);
   }
 
@@ -168,5 +186,5 @@
   try{ window.v112_makeTripFromLogSync = stage2MakeTripFromLogSync; v112_makeTripFromLogSync = stage2MakeTripFromLogSync; }catch(e){}
   try{ window.v112_makePicoSummary = stage2MakePicoSummary; v112_makePicoSummary = stage2MakePicoSummary; }catch(e){}
   try{ window.v112_applyLogSyncPayload = stage2ApplyLogSyncPayload; v112_applyLogSyncPayload = stage2ApplyLogSyncPayload; }catch(e){}
-  console.info('[wakasagi] stage2 visit receiver 20260611c installed - env/time fields kept, no extra activity gate');
+  console.info('[wakasagi] stage2 visit receiver 20260611d installed - pico parent requires gps_visit_candidates');
 })();
