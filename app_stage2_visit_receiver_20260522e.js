@@ -1,6 +1,6 @@
 (function(){
   'use strict';
-  const INSTALL_FLAG = '__wakasagiStage2VisitReceiver20260611jInstalled';
+  const INSTALL_FLAG = '__wakasagiStage2VisitReceiver20260611lInstalled';
   if(window[INSTALL_FLAG]) return;
   window[INSTALL_FLAG] = true;
 
@@ -58,6 +58,20 @@
       }
     }catch(e){}
   }
+
+  function autoReturnIfRequested(p, ok){
+    try{
+      if(!ok) return;
+      const url = s(p && p.auto_return_url);
+      if(!url) return;
+      setLogSync('実釣同期完了: /logへ戻ります','good');
+      setTimeout(()=>{
+        try{ location.replace(url); }
+        catch(e){ try{ location.href = url; }catch(_e){} }
+      }, 450);
+    }catch(e){}
+  }
+
   async function stopNoBodyActivity(msg){
     clearLogSyncHash();
     try{ if(typeof refreshAll === 'function') await refreshAll(); }catch(e){}
@@ -204,7 +218,9 @@
         : [];
 
       if(!visits.length){
-        return await stopNoBodyActivity('実釣なし: 保存なし');
+        const stopped = await stopNoBodyActivity('実釣なし: 保存なし');
+        autoReturnIfRequested(p, !!(p && (p.auto_sync || p.auto_return_url)));
+        return stopped;
       }
 
       let saved = 0;
@@ -216,6 +232,7 @@
       try{ if(typeof refreshAll === 'function') await refreshAll(); }catch(e){}
       try{ if(typeof fitInitialLakeViewOnce === 'function') fitInitialLakeViewOnce(true); }catch(e){}
       setLogSync('実釣' + saved + '地点同期','good');
+      autoReturnIfRequested(p, !!(p && (p.auto_sync || p.auto_return_url)) || saved > 0);
       return saved > 0;
     }
 
@@ -226,5 +243,5 @@
   try{ window.v112_makeTripFromLogSync = stage2MakeTripFromLogSync; v112_makeTripFromLogSync = stage2MakeTripFromLogSync; }catch(e){}
   try{ window.v112_makePicoSummary = stage2MakePicoSummary; v112_makePicoSummary = stage2MakePicoSummary; }catch(e){}
   try{ window.v112_applyLogSyncPayload = stage2ApplyLogSyncPayload; v112_applyLogSyncPayload = stage2ApplyLogSyncPayload; }catch(e){}
-  console.info('[wakasagi] stage2 visit receiver 20260611j installed - body activity required');
+  console.info('[wakasagi] stage2 visit receiver 20260611k installed - body activity required');
 })();
