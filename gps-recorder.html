@@ -1,213 +1,38 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Wakasagi GPS Recorder</title>
-<style>
- body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#07111f;color:#e5edf7;margin:0;padding:16px;}
- .card{background:#111c2e;border:1px solid #26364f;border-radius:14px;padding:14px;margin:0 0 12px;}
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+ <title>Wakasagi GPS Recorder</title>
+ <style>
+ body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;margin:14px;line-height:1.55;background:#0f172a;color:#e5e7eb;}
  h1{font-size:20px;margin:0 0 10px;}
- button{font-size:15px;padding:10px 12px;margin:4px;border-radius:10px;border:1px solid #3c4f70;background:#1f3760;color:#fff;}
- button.good{background:#166534;} button.warn{background:#92400e;} button.danger{background:#7f1d1d;}
- pre{white-space:pre-wrap;background:#06101f;border-radius:10px;padding:10px;color:#cbd5e1;max-height:40vh;overflow:auto;}
- .muted{color:#9fb0c8;font-size:13px;}
-</style>
+ .card{border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:12px;margin:10px 0;background:rgba(255,255,255,.06);}
+ .status{font-weight:700;margin:8px 0;color:#93c5fd;}
+ .good{color:#86efac}.warn{color:#fde68a}.bad{color:#fca5a5}
+ button{font-size:16px;padding:10px 12px;margin:5px 4px 5px 0;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:#1e293b;color:#fff;}
+ pre{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.28);padding:10px;border-radius:10px;font-size:12px;}
+ .small{font-size:13px;opacity:.85;}
+ </style>
 </head>
 <body>
-<div class="card">
-<h1>Wakasagi GPS Recorder</h1>
-<p>このページはスマホ側HTTPSでGPS候補を取得し、/logから渡された実釣visit履歴をGitHub側IndexedDBへ保存します。Map画面は開きません。</p>
-<p id="status">待機中</p>
-<div>
-<button id="btnRecord" class="good">現在地を記録</button>
-<button id="btnAgain">現在地を再取得</button>
-<button id="btnStop" class="warn">停止</button>
-<button id="btnClearSid" class="danger">このsidのGPS候補を削除</button>
-<button id="btnClearAll" class="danger">全GPS候補を削除</button>
-</div>
-<p class="muted">釣行ログ入口から別ウィンドウで開かれた場合、/log側からのGPS要求と実釣visit保存要求を待ち受けます。</p>
-</div>
-<div class="card"><pre id="log">{}</pre></div>
-<script>
-(function(){
-'use strict';
-const VERSION='gps_recorder_trip_sync_20260613b';
-const DB_NAME='wakasagi_trip_map_v10';
-const DB_VER=1;
-const STORE_TRIPS='trip_records';
-const STORE_META='meta';
-let db=null;
-let lastRequest=null;
-let stopped=false;
-const $=id=>document.getElementById(id);
-function s(v){ return String(v==null?'':v).trim(); }
-function n(v){ const x=Number(v); return Number.isFinite(x)?x:null; }
-function firstNum(){ for(const v of arguments){ const x=n(v); if(x!==null && x>0) return x; } return null; }
-function genId(p){ return String(p||'T')+Date.now().toString(36)+Math.floor(Math.random()*0xfffff).toString(16).padStart(5,'0'); }
-function setStatus(t){ try{$('status').textContent=t;}catch(e){} }
-function logObj(o){ try{$('log').textContent=JSON.stringify(o||{},null,2);}catch(e){} }
-function validLatLng(lat,lng){ return Number.isFinite(lat)&&Number.isFinite(lng)&&Math.abs(lat)<=90&&Math.abs(lng)<=180&&!(lat===0&&lng===0); }
-function openDb(){
- return new Promise((resolve,reject)=>{
-  const req=indexedDB.open(DB_NAME,DB_VER);
-  req.onupgradeneeded=()=>{
-   const d=req.result;
-   if(!d.objectStoreNames.contains(STORE_TRIPS)){
-    const st=d.createObjectStore(STORE_TRIPS,{keyPath:'trip_id'});
-    try{st.createIndex('date_ms','date_ms',{unique:false});}catch(e){}
-   }
-   if(!d.objectStoreNames.contains(STORE_META)) d.createObjectStore(STORE_META,{keyPath:'key'});
-  };
-  req.onsuccess=()=>{ db=req.result; resolve(db); };
-  req.onerror=()=>reject(req.error||new Error('db open failed'));
- });
-}
-function st(name,mode){ return db.transaction(name,mode||'readonly').objectStore(name); }
-function getAllTrips(){ return new Promise(res=>{ try{ const r=st(STORE_TRIPS).getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>res([]);}catch(e){res([]);} }); }
-function putTrip(t){ return new Promise(res=>{ try{ const tx=db.transaction(STORE_TRIPS,'readwrite'); tx.objectStore(STORE_TRIPS).put(t); tx.oncomplete=()=>res(true); tx.onerror=()=>res(false);}catch(e){res(false);} }); }
-async function findTripByVisitId(visitId){
- const key=s(visitId); if(!key) return null;
- const trips=await getAllTrips();
- for(const t of trips){
-  if(s(t.gps_visit_id)===key) return t;
-  if(t.pico_summary && s(t.pico_summary.gps_visit_id)===key) return t;
-  if(Array.isArray(t.pico_logs) && t.pico_logs.some(x=>s(x&&x.gps_visit_id)===key)) return t;
- }
- return null;
-}
-function hasLatLng(v){ const lat=Number(v&&(v.gps_lat||v.latest_lat||v.lat)); const lng=Number(v&&(v.gps_lng||v.latest_lng||v.lng)); return validLatLng(lat,lng); }
-function hasBodyActivityProof(v){
- if(!v) return false;
- if(Number(v.motor_count||0)>0) return true;
- if(Number(v.pulse_count||0)>0) return true;
- if(Number(v.fishing_event_count||0)>0) return true;
- const r=s(v.activity_reason||'');
- return /(^|,)(motorRun|pulse|event)(,|$)/.test(r);
-}
-function depthText(){ for(const v of arguments){ const t=s(v); if(t && t!=='-' && t!=='0' && t!=='0.0') return t; } return ''; }
-function mergeVisitPayload(parent,visit){
- const p=Object.assign({}, parent||{}, visit||{});
- p.sid=s((parent&&parent.sid)||(visit&&visit.sid));
- p.gps_visit_id=s(visit&&(visit.gps_visit_id||visit.visit_id));
- p.gps_lat=s((visit&&(visit.gps_lat||visit.latest_lat||visit.lat))||p.gps_lat||p.lat);
- p.gps_lng=s((visit&&(visit.gps_lng||visit.latest_lng||visit.lng))||p.gps_lng||p.lng);
- p.gps_acc_m=s((visit&&(visit.gps_acc_m||visit.acc_m||visit.acc))||p.gps_acc_m||p.acc);
- p.fishfinder_depth_m=depthText(p.fishfinder_depth_m,p.max_depth_m,p.fishfinder_m,p.water_depth_m);
- p.water_depth_m=p.fishfinder_depth_m;
- p.depth_status=p.fishfinder_depth_m?'measured':'not_measured';
- return p;
-}
-function makeTripFromVisit(p,old){
- const now=Date.now();
- const visitKey=s(p.gps_visit_id||p.visit_id);
- const lat=Number(p.gps_lat||p.latest_lat||p.lat);
- const lng=Number(p.gps_lng||p.latest_lng||p.lng);
- const tripStartMs=firstNum(p.trip_start_ms,p.start_ms,p.first_recv_ms,p.visit_start_ms,old&&old.date_ms,now)||now;
- const tripEndMs=firstNum(p.trip_end_ms,p.updated_ms,p.last_recv_ms,p.visit_end_ms,old&&old.trip_end_ms)||0;
- const pointStartMs=firstNum(p.point_start_ms,p.visit_start_ms,p.start_ms,p.first_recv_ms)||0;
- const pointEndMs=firstNum(p.point_end_ms,p.visit_end_ms,p.updated_ms,p.last_recv_ms)||0;
- const visitLabel=s(p.visit_label || (firstNum(p.candidate_no,p.visit_no)?('P'+firstNum(p.candidate_no,p.visit_no)):''));
- const t=Object.assign({}, old||{});
- t.trip_id=s(t.trip_id)||genId('T');
- t.sid=s(p.sid||t.sid||'');
- t.gps_visit_id=visitKey;
- t.candidate_no=firstNum(p.candidate_no,p.visit_no) || t.candidate_no || '';
- t.visit_label=visitLabel || t.visit_label || '';
- t.date_ms=tripStartMs;
- t.lat=lat; t.lng=lng;
- t.accuracy_m=firstNum(p.gps_acc_m,p.acc_m,p.acc,t.accuracy_m)||0;
- t.location_time_ms=firstNum(p.visit_start_ms,p.gps_ms,p.start_ms,t.location_time_ms,now)||now;
- if(tripStartMs) t.trip_start_ms=tripStartMs;
- if(tripEndMs) t.trip_end_ms=tripEndMs;
- if(pointStartMs) t.point_start_ms=pointStartMs;
- if(pointEndMs) t.point_end_ms=pointEndMs;
- if(firstNum(p.visit_start_ms)) t.visit_start_ms=firstNum(p.visit_start_ms);
- if(firstNum(p.visit_end_ms)) t.visit_end_ms=firstNum(p.visit_end_ms);
- t.lake_name=s(p.lake_name||p.place_name||t.lake_name||'');
- t.point_name=s(p.point_name||visitLabel||t.point_name||'Pico W実釣地点');
- t.line_no=s(p.line_no||t.line_no||'');
- t.sinker_g=s(p.sinker_g||t.sinker_g||'');
- t.fishfinder_depth_m=s(p.fishfinder_depth_m||p.water_depth_m||p.fishfinder_m||t.fishfinder_depth_m||'');
- t.water_temp_c=s(p.water_temp_c||t.water_temp_c||'');
- t.weather=s(p.weather||p.weather_text||t.weather||'');
- t.weather_text=s(p.weather_text||p.weather||t.weather_text||'');
- t.wind=s(p.wind||p.wind_dir||t.wind||'');
- t.wind_dir=s(p.wind_dir||t.wind_dir||'');
- t.wind_speed_mps=s(p.wind_speed_mps||t.wind_speed_mps||'');
- t.pressure_hpa=s(p.pressure_hpa||p.pressure||p.air_pressure_hpa||t.pressure_hpa||'');
- t.memo=s(p.memo||p.note||t.memo||'');
- t.fish_count=firstNum(p.fish_count,t.fish_count)||0;
- t.mark_count=firstNum(p.mark_count,t.mark_count)||0;
- t.tlog_count=firstNum(p.tlog_count,t.tlog_count)||0;
- t.depth_range_mm=firstNum(p.depth_range_mm,t.depth_range_mm)||'';
- t.pico_summary=Object.assign({}, t.pico_summary||{}, {gps_visit_id:visitKey, sid:t.sid, visit_label:t.visit_label, candidate_no:t.candidate_no, trip_start_ms:t.trip_start_ms||0, trip_end_ms:t.trip_end_ms||0, point_start_ms:t.point_start_ms||0, point_end_ms:t.point_end_ms||0, depth_range_mm:t.depth_range_mm||''});
- t.updated_ms=now;
- t.created_ms=firstNum(t.created_ms,now)||now;
- return t;
-}
-async function saveTripSyncPayload(payload){
- if(!db) await openDb();
- const p=payload||{};
- const visits=Array.isArray(p.gps_visit_candidates) ? p.gps_visit_candidates.filter(v=>v&&s(v.gps_visit_id||v.visit_id)&&hasLatLng(v)&&hasBodyActivityProof(v)) : [];
- let saved=0, skipped=0;
- for(const v of visits){
-  const one=mergeVisitPayload(p,v);
-  const old=await findTripByVisitId(one.gps_visit_id);
-  const trip=makeTripFromVisit(one,old);
-  if(validLatLng(Number(trip.lat),Number(trip.lng)) && await putTrip(trip)) saved++; else skipped++;
- }
- return {saved, skipped, visit_count:visits.length};
-}
-function postToLog(msg){
- const m=Object.assign({version:VERSION}, msg||{});
- let ok=false;
- try{ if(window.opener && !window.opener.closed){ window.opener.postMessage(m,'*'); ok=true; } }catch(e){}
- try{ const w=window.open('', 'wakasagi_log'); if(w && !w.closed){ w.postMessage(m,'*'); ok=true; } }catch(e){}
- return ok;
-}
-function ready(){ postToLog({type:'wakasagi:gps-recorder-ready'}); setStatus('待機中'); }
-function getPosOnce(req){
- return new Promise((resolve)=>{
-  if(stopped){ resolve({ok:false,error:'stopped'}); return; }
-  if(!navigator.geolocation){ resolve({ok:false,error:'geolocation unsupported'}); return; }
-  navigator.geolocation.getCurrentPosition(g=>{
-   const c=g.coords||{};
-   resolve({ok:true,lat:c.latitude,lng:c.longitude,acc_m:c.accuracy,pos_ms:g.timestamp||Date.now(),source:'gps_recorder',request:req||{}});
-  }, e=>resolve({ok:false,error:(e&&e.message)||'gps error',request:req||{}}), {enableHighAccuracy:true,timeout:12000,maximumAge:0});
- });
-}
-async function runGpsRequest(req){
- lastRequest=req||{}; setStatus('GPS取得中...'); logObj({request:req});
- const r=await getPosOnce(req);
- const out=Object.assign({type:'wakasagi:gps-result', request:req||{}, reason:s(req&&req.reason), request_id:s(req&&req.request_id), sid:s(req&&req.sid), phone_ms:Date.now()}, r);
- logObj(out); setStatus(out.ok?'GPS結果送信':'GPS取得失敗'); postToLog(out);
-}
-async function runTripSync(req){
- const sig=s(req&&req.sig); setStatus('実釣履歴保存中...');
- try{
-  const res=await saveTripSyncPayload(req&&req.payload);
-  const ok=Number(res.saved||0)>0;
-  const out={type:'wakasagi:trip-sync-ack', ok, sig, saved:res.saved||0, skipped:res.skipped||0, visit_count:res.visit_count||0};
-  logObj(out); setStatus(ok?'実釣履歴保存完了':'保存対象なし'); postToLog(out);
- }catch(e){
-  const out={type:'wakasagi:trip-sync-ack', ok:false, sig, error:e&&e.message?e.message:String(e)};
-  logObj(out); setStatus('実釣履歴保存失敗'); postToLog(out);
- }
-}
-window.addEventListener('message', ev=>{
- const d=ev&&ev.data?ev.data:null; if(!d||!d.type) return;
- if(d.type==='wakasagi:gps-request'){ runGpsRequest(d); return; }
- if(d.type==='wakasagi:trip-sync-payload'){ runTripSync(d); return; }
- if(d.type==='wakasagi_autosync_cancel' || d.type==='wakasagi:trip-sync-cancel'){ setStatus('保存要求キャンセル'); return; }
-});
-$('btnRecord').onclick=()=>runGpsRequest({reason:'manual_record',request_id:'MAN_'+Date.now().toString(36),phone_ms:Date.now()});
-$('btnAgain').onclick=()=>runGpsRequest(Object.assign({},lastRequest||{},{reason:'manual_again',request_id:'MAN_'+Date.now().toString(36),phone_ms:Date.now()}));
-$('btnStop').onclick=()=>{stopped=true; setStatus('停止');};
-$('btnClearSid').onclick=()=>{setStatus('このページではGPS候補DB削除は行いません');};
-$('btnClearAll').onclick=()=>{setStatus('このページでは全GPS候補DB削除は行いません');};
-openDb().then(()=>{ ready(); setInterval(ready,5000); }).catch(e=>{ setStatus('DB初期化失敗'); logObj({error:e&&e.message?e.message:String(e)}); ready(); });
-})();
-</script>
+ <h1>Wakasagi GPS Recorder</h1>
+ <div class="card">
+ <div class="small">
+ このページはスマホ側HTTPSでGPS候補だけを取得・保存します。Pico W本体、/log同期、リール制御、Map履歴には直接書き込みません。
+ </div>
+ <div id="status" class="status">待機中</div>
+ <button id="btnStart">現在地を記録</button>
+ <button id="btnOne">現在地を再取得</button>
+ <button id="btnStop">停止</button>
+ <button id="btnClearSid">このsidのGPS候補を削除</button>
+ <button id="btnClearAll">全GPS候補を削除</button>
+ </div>
+ <div class="card small">
+ <b>待機モード</b><br>
+ 釣行ログ入口から別ウィンドウで開かれた場合、/log側からのGPS要求を待ち受けます。要求が来た時だけGPSを1回取得します。GPS精度が悪くても保存拒否せず、精度注意として返します。
+ </div>
+ <pre id="debug">{}</pre>
+ <script src="./gps_recorder.js?v=20260531s" defer></script>
 </body>
 </html>
