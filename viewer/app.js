@@ -1,5 +1,6 @@
 'use strict';
 
+const VIEWER_VERSION = 'viewer_full_20260614d';
 const DB_NAME = 'wakasagi_trip_map_v10';
 const DB_VER = 1;
 const STORE_TRIPS = 'trip_records';
@@ -12,259 +13,94 @@ let selectedTripId = null;
 let map = null;
 let markers = null;
 
-let g_lakeIndex = null;
-const g_lakePrefCache = new Map();
-const g_lakeGuessCache = new Map();
-
 const $ = (id) => document.getElementById(id);
 
 function esc(v){
-  return String(v == null ? '' : v).replace(/[&<>"']/g, (m) => ({
-    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
-  }[m]));
+  return String(v == null ? '' : v).replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 function pad(n){ return String(n).padStart(2, '0'); }
+function toNum(v){ const n = Number(v); return Number.isFinite(n) ? n : NaN; }
+function validMs(v){ const n = Number(v || 0); return Number.isFinite(n) && n > 0 ? n : 0; }
 function fmtDate(ms){
-  const n = Number(ms || 0);
+  const n = validMs(ms);
   if(!n) return '-';
   const d = new Date(n);
   if(Number.isNaN(d.getTime())) return '-';
   return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())}`;
 }
-function fmtDateTime(ms){
-  const n = Number(ms || 0);
+function fmtTime(ms){
+  const n = validMs(ms);
   if(!n) return '-';
   const d = new Date(n);
   if(Number.isNaN(d.getTime())) return '-';
-  return `${fmtDate(n)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
-function toNum(v){
-  const n = Number(v);
-  return Number.isFinite(n) ? n : NaN;
+function fmtDateTime(ms){
+  const n = validMs(ms);
+  if(!n) return '-';
+  const d = new Date(n);
+  if(Number.isNaN(d.getTime())) return '-';
+  return `${fmtDate(n)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
-function lat(t){ return toNum(t.lat); }
-function lng(t){ return toNum(t.lng); }
-function tms(t){ return Number(t.date_ms || t.start_ms || t.created_ms || t.location_time_ms || 0); }
-
-async function loadLakeIndex(){
-  if(g_lakeIndex) return g_lakeIndex;
-  const res = await fetch('./lakes/index.json', {cache:'force-cache'});
-  if(!res.ok) throw new Error('lakes/index.json を読めません');
-  g_lakeIndex = await res.json();
-  return g_lakeIndex;
+function fmtDuration(start, end){
+  const a = validMs(start), b = validMs(end);
+  if(!a || !b || b < a) return '-';
+  const sec = Math.round((b - a) / 1000);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if(h) return `${h}時間${m}分${s}秒`;
+  if(m) return `${m}分${s}秒`;
+  return `${s}秒`;
 }
-
-async function loadLakePrefFile(file){
-  if(g_lakePrefCache.has(file)) return g_lakePrefCache.get(file);
-  const res = await fetch('./lakes/' + file, {cache:'force-cache'});
-  if(!res.ok) throw new Error('./lakes/' + file + ' を読めません');
-  const data = await res.json();
-  g_lakePrefCache.set(file, data);
-  return data;
+function flatText(v){
+  if(v == null || v === '') return '-';
+  if(Array.isArray(v)) return v.join(', ');
+  if(typeof v === 'object') return JSON.stringify(v);
+  return String(v);
 }
-
-function inBboxLngLat(lng, lat, bbox, marginDeg = 0){
-  return lng >= bbox[0] - marginDeg &&
-         lat >= bbox[1] - marginDeg &&
-         lng <= bbox[2] + marginDeg &&
-         lat <= bbox[3] + marginDeg;
-}
-
-function pointInRing(lng, lat, ring){
-  let inside = false;
-  for(let i=0, j=ring.length-1; i<ring.length; j=i++){
-    const xi = ring[i][0], yi = ring[i][1];
-    const xj = ring[j][0], yj = ring[j][1];
-    const intersect = ((yi > lat) !== (yj > lat)) &&
-      (lng < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi);
-    if(intersect) inside = !inside;
+function clean(v){ return String(v == null ? '' : v).trim(); }
+function arr(v){ return Array.isArray(v) ? v : []; }
+function firstValue(obj, names){
+  for(const n of names){
+    if(obj && obj[n] != null && obj[n] !== '') return obj[n];
   }
-  return inside;
+  return '';
 }
-
-function pointInPolygon(lng, lat, polygonCoords){
-  if(!polygonCoords || !polygonCoords.length) return false;
-  if(!pointInRing(lng, lat, polygonCoords[0])) return false;
-  for(let i=1; i<polygonCoords.length; i++){
-    if(pointInRing(lng, lat, polygonCoords[i])) return false;
+function nestedSources(t){
+  return [
+    t || {},
+    (t && t.pico_summary) || {},
+    (t && t.pico_payload) || {},
+    (t && Array.isArray(t.pico_logs) && t.pico_logs.length ? t.pico_logs[t.pico_logs.length - 1] : {}) || {}
+  ];
+}
+function pick(t, names){
+  for(const src of nestedSources(t)){
+    const v = firstValue(src, names);
+    if(v !== '') return v;
   }
-  return true;
+  return '';
 }
-
-function pointInGeometry(lng, lat, geom){
-  if(!geom) return false;
-  if(geom.type === 'Polygon'){
-    return pointInPolygon(lng, lat, geom.coordinates);
-  }
-  if(geom.type === 'MultiPolygon'){
-    return geom.coordinates.some(poly => pointInPolygon(lng, lat, poly));
-  }
-  return false;
-}
-
-function tripLakeGuessKey(t){
-  return String(t.trip_id || '') || (String(t.date_ms || '') + ':' + String(t.lat || '') + ':' + String(t.lng || ''));
-}
-
-
-function distanceMetersLatLng(lat1, lng1, lat2, lng2){
-  const R = 6371008.8;
-  const p1 = lat1 * Math.PI / 180;
-  const p2 = lat2 * Math.PI / 180;
-  const dp = (lat2 - lat1) * Math.PI / 180;
-  const dl = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dp/2) * Math.sin(dp/2) +
-            Math.cos(p1) * Math.cos(p2) *
-            Math.sin(dl/2) * Math.sin(dl/2);
-  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-}
-
-function pointToSegmentDistanceMeters(lat, lng, lat1, lng1, lat2, lng2){
-  const R = 6371008.8;
-  const baseLatRad = lat * Math.PI / 180;
-
-  function xOf(lon){ return (lon - lng) * Math.PI / 180 * Math.cos(baseLatRad) * R; }
-  function yOf(la){ return (la - lat) * Math.PI / 180 * R; }
-
-  const ax = xOf(lng1), ay = yOf(lat1);
-  const bx = xOf(lng2), by = yOf(lat2);
-  const dx = bx - ax, dy = by - ay;
-  const len2 = dx*dx + dy*dy;
-
-  if(len2 <= 1e-9){
-    return Math.sqrt(ax*ax + ay*ay);
-  }
-
-  let t = -(ax*dx + ay*dy) / len2;
-  if(t < 0) t = 0;
-  if(t > 1) t = 1;
-
-  const cx = ax + t*dx;
-  const cy = ay + t*dy;
-  return Math.sqrt(cx*cx + cy*cy);
-}
-
-function ringDistanceMeters(lat, lng, ring){
-  let best = Infinity;
-  for(let i=0; i<ring.length-1; i++){
-    const a = ring[i];
-    const b = ring[i+1];
-    const d = pointToSegmentDistanceMeters(lat, lng, a[1], a[0], b[1], b[0]);
-    if(d < best) best = d;
-  }
-  return best;
-}
-
-function geometryDistanceMeters(lat, lng, geom){
-  if(!geom) return Infinity;
-  let best = Infinity;
-
-  if(geom.type === 'Polygon'){
-    for(const ring of geom.coordinates){
-      const d = ringDistanceMeters(lat, lng, ring);
-      if(d < best) best = d;
-    }
-    return best;
-  }
-
-  if(geom.type === 'MultiPolygon'){
-    for(const poly of geom.coordinates){
-      for(const ring of poly){
-        const d = ringDistanceMeters(lat, lng, ring);
-        if(d < best) best = d;
-      }
-    }
-    return best;
-  }
-
-  return Infinity;
-}
-
-
-async function guessLakeNameFromLatLng(lat, lng){
-  if(!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-
-  const index = await loadLakeIndex();
-
-  // bbox候補拡張。湖岸付近・GPSずれを拾うため約500m相当に広げる。
-  const marginDeg = 0.005;
-  const nearLimitM = 500;
-
-  const candidates = (index.lakes || []).filter(lake => inBboxLngLat(lng, lat, lake.bbox, marginDeg));
-  if(!candidates.length) return null;
-
-  const files = [...new Set(candidates.map(c => c.file))];
-  let nearest = null;
-
-  for(const file of files){
-    const lakes = await loadLakePrefFile(file);
-
-    for(const lake of lakes){
-      if(!inBboxLngLat(lng, lat, lake.bbox, marginDeg)) continue;
-
-      if(pointInGeometry(lng, lat, lake.geometry)){
-        return {
-          lake_name: lake.name,
-          lake_source: 'ksj_w09_polygon',
-          lake_confidence: 1.0
-        };
-      }
-
-      const d = geometryDistanceMeters(lat, lng, lake.geometry);
-      if(Number.isFinite(d) && d <= nearLimitM){
-        if(!nearest || d < nearest.distance_m){
-          nearest = {
-            lake_name: lake.name,
-            lake_source: 'ksj_w09_near',
-            lake_confidence: 0.7,
-            distance_m: d
-          };
-        }
-      }
+function pickMs(t, names){
+  for(const src of nestedSources(t)){
+    for(const n of names){
+      const v = validMs(src && src[n]);
+      if(v) return v;
     }
   }
-
-  return nearest;
+  return 0;
 }
-
-async function enrichLakeGuessesForTrips(trips){
-  try{
-    const targets = trips.filter(t => {
-      const current = String(t.lake_name || t.lakeName || '').trim();
-      return !current && validLatLng(lat(t), lng(t));
-    });
-
-    for(const t of targets){
-      const key = tripLakeGuessKey(t);
-      if(g_lakeGuessCache.has(key)) continue;
-      const guess = await guessLakeNameFromLatLng(lat(t), lng(t));
-      if(guess && guess.lake_name){
-        g_lakeGuessCache.set(key, guess);
-      }else{
-        g_lakeGuessCache.set(key, null);
-      }
-    }
-  }catch(e){
-    // 湖名推定に失敗しても、閲覧機能自体は止めない。
-    console.warn('lake guess failed', e);
-  }
-}
-
-function displayLakeName(t){
-  const lake = String(t.lake_name || t.lakeName || '').trim();
-  if(lake) return lake;
-
-  const guess = g_lakeGuessCache.get(tripLakeGuessKey(t));
-  if(guess && guess.lake_name){
-    return guess.lake_name;
-  }
-
-  return '湖名未登録';
-}
-function displayPointName(t){
-  const point = String(t.point_name || t.pointName || '').trim();
-  return point || 'ポイント未登録';
-}
+function lat(t){ return toNum(pick(t, ['lat','gps_lat','latest_lat'])); }
+function lng(t){ return toNum(pick(t, ['lng','gps_lng','latest_lng'])); }
+function validLatLng(a,b){ return Number.isFinite(a) && Number.isFinite(b) && a >= -90 && a <= 90 && b >= -180 && b <= 180 && !(a === 0 && b === 0); }
+function tripStartMs(t){ return pickMs(t, ['trip_start_ms','date_ms','start_ms','created_ms','location_time_ms','first_recv_ms','visit_start_ms','point_start_ms']); }
+function tripEndMs(t){ return pickMs(t, ['trip_end_ms','last_recv_ms','updated_ms','end_ms','visit_end_ms','point_end_ms']); }
+function pointStartMs(t){ return pickMs(t, ['point_start_ms','visit_start_ms','first_recv_ms','start_ms','date_ms','location_time_ms']); }
+function pointEndMs(t){ return pickMs(t, ['point_end_ms','last_recv_ms','visit_end_ms','updated_ms','trip_end_ms','end_ms']); }
+function tms(t){ return pointStartMs(t) || tripStartMs(t) || validMs(t && t.date_ms) || 0; }
+function displayLakeName(t){ return clean(pick(t, ['lake_name','lakeName','place_name'])) || '湖名未登録'; }
+function displayPointName(t){ return clean(pick(t, ['point_name','pointName','visit_label'])) || 'ポイント未登録'; }
 function title(t){
   const lake = displayLakeName(t);
   const point = displayPointName(t);
@@ -273,10 +109,7 @@ function title(t){
   if(point !== 'ポイント未登録') return point;
   return '釣行地点';
 }
-function validLatLng(a,b){
-  return Number.isFinite(a) && Number.isFinite(b) && a >= -90 && a <= 90 && b >= -180 && b <= 180;
-}
-function dist(lat1,lng1,lat2,lng2){
+function distanceMetersLatLng(lat1,lng1,lat2,lng2){
   const R = 6371008.8;
   const r = (v) => v * Math.PI / 180;
   const p1 = r(lat1), p2 = r(lat2), dp = r(lat2-lat1), dl = r(lng2-lng1);
@@ -289,11 +122,12 @@ function setBadge(id, text, mode){
   el.textContent = text;
   el.className = (id === 'dbBadge' ? 'badge' : 'pill') + (mode ? ` ${mode}` : '');
 }
-function flatText(v){
-  if(v == null || v === '') return '-';
-  if(Array.isArray(v)) return v.join(', ');
-  if(typeof v === 'object') return JSON.stringify(v);
-  return String(v);
+function safeJson(v){
+  try{ return JSON.stringify(v, null, 2); }catch(e){ return String(v); }
+}
+function row(k, v){ return `<tr><th>${esc(k)}</th><td>${esc(flatText(v))}</td></tr>`; }
+function section(titleText, rowsHtml){
+  return `<h3>${esc(titleText)}</h3><table class="viewerDataTable"><tbody>${rowsHtml}</tbody></table>`;
 }
 
 function openDb(){
@@ -307,276 +141,204 @@ function openDb(){
       }
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
   });
 }
 function getAllTrips(){
   return new Promise((resolve) => {
-    if(!db || !db.objectStoreNames.contains(STORE_TRIPS)){
-      resolve([]);
-      return;
-    }
+    if(!db || !db.objectStoreNames.contains(STORE_TRIPS)){ resolve([]); return; }
     const tx = db.transaction(STORE_TRIPS, 'readonly');
     const req = tx.objectStore(STORE_TRIPS).getAll();
     req.onsuccess = () => resolve(req.result || []);
     req.onerror = () => resolve([]);
   });
 }
-
 function filterTrips(){
-  const q = ($('searchBox').value || '').trim().toLowerCase();
-  const mode = $('sortMode').value || 'date_desc';
+  const q = (($('searchBox') && $('searchBox').value) || '').trim().toLowerCase();
+  const mode = (($('sortMode') && $('sortMode').value) || 'date_desc');
   let rows = allTrips.filter((t) => validLatLng(lat(t), lng(t)));
-
   if(q){
     rows = rows.filter((t) => {
       const s = [
-        fmtDateTime(tms(t)),
-        title(t),
-        displayLakeName(t), displayPointName(t),
-        t.lake_name, t.lakeName, t.point_name, t.pointName,
-        t.line_no, t.sinker_g, t.fishfinder_depth_m,
-        t.water_temp_c, t.weather, t.wind, t.memo
+        fmtDateTime(pointStartMs(t)), fmtDateTime(pointEndMs(t)), title(t), displayLakeName(t), displayPointName(t),
+        pick(t, ['line_no','line']), pick(t, ['sinker_g','sinker']), pick(t, ['fishfinder_depth_m','water_depth_m','fishfinder_m']),
+        pick(t, ['weather_text','weather']), pick(t, ['wind']), pick(t, ['memo','note']),
+        pick(t, ['gps_visit_id','visit_id']), pick(t, ['sid','pico_sid']), safeJson(t)
       ].join(' ').toLowerCase();
       return s.includes(q);
     });
   }
-
   rows.sort((a,b) => {
     if(mode === 'date_asc') return tms(a) - tms(b);
     if(mode === 'name') return title(a).localeCompare(title(b), 'ja');
     return tms(b) - tms(a);
   });
-
   return rows;
 }
-
 function renderList(){
   const rows = filterTrips();
   $('countBadge').textContent = `${rows.length}件`;
   const box = $('tripList');
-
   if(!allTrips.length){
     box.className = 'tripList empty';
     box.textContent = '保存済みの過去釣行データがありません。';
     return;
   }
-
   if(!rows.length){
     box.className = 'tripList empty';
     box.textContent = '条件に合う釣行データがありません。';
     return;
   }
-
   box.className = 'tripList';
   box.innerHTML = rows.map((t) => {
     const id = esc(String(t.trip_id || ''));
     const selected = String(selectedTripId || '') === String(t.trip_id || '');
-    return `
-      <button type="button" class="tripItem${selected ? ' selected' : ''}" data-trip-id="${id}">
-        <div class="tripDate">${esc(fmtDate(tms(t)))}　${esc(displayLakeName(t))}</div>
-        <div class="tripTitle">${esc(displayPointName(t))}</div>
-        <div class="tripMeta">
-          ライン ${esc(t.line_no || '-')} / シンカー ${esc(t.sinker_g || '-')}g /
-          魚探 ${esc(t.fishfinder_depth_m || '-')}m / 水温 ${esc(t.water_temp_c || '-')}℃
-        </div>
-      </button>
-    `;
+    return `<button class="tripItem${selected ? ' selected' : ''}" type="button" data-trip-id="${id}">
+      <strong>${esc(fmtDate(pointStartMs(t)))} ${esc(displayLakeName(t))}</strong>
+      <span>${esc(displayPointName(t))}</span>
+      <small>開始 ${esc(fmtDateTime(pointStartMs(t)))} / 終了 ${esc(fmtDateTime(pointEndMs(t)))} / ライン ${esc(pick(t,['line_no','line']) || '-')} / シンカー ${esc(pick(t,['sinker_g','sinker']) || '-')}g / 魚探 ${esc(pick(t,['fishfinder_depth_m','water_depth_m','fishfinder_m']) || '-')}m</small>
+    </button>`;
   }).join('');
 }
-
-function findTrip(id){
-  return allTrips.find((t) => String(t.trip_id || '') === String(id || '')) || null;
-}
+function findTrip(id){ return allTrips.find((t) => String(t.trip_id || '') === String(id || '')) || null; }
 function samePointTrips(base){
   if(!base || !validLatLng(lat(base), lng(base))) return [];
   return allTrips
     .filter((t) => validLatLng(lat(t), lng(t)))
-    .map((t) => ({trip:t, d:dist(lat(base), lng(base), lat(t), lng(t))}))
+    .map((t) => ({trip:t, d:distanceMetersLatLng(lat(base), lng(base), lat(t), lng(t))}))
     .filter((x) => x.d <= SAME_POINT_M)
     .sort((a,b) => tms(b.trip) - tms(a.trip));
 }
-function picoSummaryHtml(t){
-  const s = t.pico_summary || t.pico_log_summary || t.log_summary || {};
-  const logs = t.pico_logs || t.logs || [];
-
-  const pick = (names) => {
-    for(const n of names){
-      if(s && s[n] != null && s[n] !== '') return s[n];
-      if(t && t[n] != null && t[n] !== '') return t[n];
-    }
-    return '';
-  };
-
-  const fields = [];
-  const fish = pick(['fish_count','fish','fishCount','FISH']);
-  const mark = pick(['mark_count','mark','markCount','MARK']);
-  const logCount = pick(['log_count','logs_count','count','sample_count']);
-  const seqMin = pick(['seq_min','seqStart','seq_start']);
-  const seqMax = pick(['seq_max','seqEnd','seq_end']);
-  const depthMin = pick(['depth_min_m','depthMinM','min_depth_m','depth_min']);
-  const depthMax = pick(['depth_max_m','depthMaxM','max_depth_m','depth_max']);
-  const speeds = pick(['speeds','speed_levels','speedLevel','used_speeds']);
-  const sasoi = pick(['sasoi','sasoi_types','sasoiType','used_sasoi']);
-  const sid = pick(['sid','session_id']);
-
-  if(sid !== '') fields.push(['sid', sid]);
-  if(fish !== '') fields.push(['FISH数', fish]);
-  if(mark !== '') fields.push(['MARK数', mark]);
-  if(logCount !== '') fields.push(['ログ数', logCount]);
-  if(seqMin !== '' || seqMax !== '') fields.push(['seq範囲', `${flatText(seqMin)} - ${flatText(seqMax)}`]);
-  if(depthMin !== '' || depthMax !== '') fields.push(['深度範囲', `${flatText(depthMin)} - ${flatText(depthMax)}`]);
-  if(speeds !== '') fields.push(['使用速度', speeds]);
-  if(sasoi !== '') fields.push(['使用誘い', sasoi]);
-  if(Array.isArray(logs) && logs.length && logCount === '') fields.push(['ログ数', logs.length]);
-
-  if(!fields.length){
-    return `
-      <div class="summaryBox">
-        <h3>保存済みPico Wログ要約</h3>
-        <p>この釣行回に保存済みのログ要約はありません。</p>
-      </div>
-    `;
-  }
-
-  return `
-    <div class="summaryBox">
-      <h3>保存済みPico Wログ要約</h3>
-      <div class="detailGrid">
-        ${fields.map(([k,v]) => `<b>${esc(k)}</b><span>${esc(flatText(v))}</span>`).join('')}
-      </div>
-    </div>
-  `;
+function summaryBlock(t){
+  const start = pointStartMs(t);
+  const end = pointEndMs(t);
+  return section('実釣ポイント時間',
+    row('ポイント開始時間', fmtDateTime(start)) +
+    row('ポイント終了時間', fmtDateTime(end)) +
+    row('ポイント実釣時間', fmtDuration(start, end)) +
+    row('終了時間の根拠', 'point_end_ms → last_recv_ms → visit_end_ms → updated_ms の順で採用')
+  );
+}
+function basicBlock(t){
+  const a = lat(t), b = lng(t);
+  return section('基本情報',
+    row('湖名', displayLakeName(t)) +
+    row('ポイント名', displayPointName(t)) +
+    row('座標', validLatLng(a,b) ? `${a.toFixed(7)}, ${b.toFixed(7)}` : '-') +
+    row('GPS精度', pick(t, ['accuracy_m','gps_acc_m','acc_m','acc'])) +
+    row('GPS品質', pick(t, ['gps_quality_label','gps_quality'])) +
+    row('候補番号', pick(t, ['candidate_no','visit_no'])) +
+    row('visit ID', pick(t, ['gps_visit_id','visit_id'])) +
+    row('sid', pick(t, ['pico_sid','sid','session_id']))
+  );
+}
+function gearBlock(t){
+  return section('釣行条件',
+    row('ライン', pick(t, ['line_no','line'])) +
+    row('シンカー(g)', pick(t, ['sinker_g','sinker'])) +
+    row('魚探水深(m)', pick(t, ['fishfinder_depth_m','water_depth_m','fishfinder_m','max_depth_m'])) +
+    row('水温(℃)', pick(t, ['water_temp_c'])) +
+    row('天気', pick(t, ['weather_text','weather'])) +
+    row('風向', pick(t, ['wind_dir'])) +
+    row('風速(m/s)', pick(t, ['wind_speed_mps'])) +
+    row('風', pick(t, ['wind'])) +
+    row('気圧(hPa)', pick(t, ['pressure_hpa','pressure','air_pressure_hpa'])) +
+    row('メモ', pick(t, ['memo','note']))
+  );
+}
+function picoBlock(t){
+  return section('Pico Wログ要約',
+    row('FISH数', pick(t, ['fish_count','fish','fishCount','FISH'])) +
+    row('MARK数', pick(t, ['mark_count','mark','markCount','MARK'])) +
+    row('ログ数', pick(t, ['tlog_count','log_count','logs_count','count','sample_count'])) +
+    row('活動ログ行数', pick(t, ['tlog_activity_row_count'])) +
+    row('seq範囲', `${flatText(pick(t, ['first_seq','seq_min','seq_start']))} - ${flatText(pick(t, ['last_seq','seq_max','seq_end']))}`) +
+    row('受信時刻範囲', `${fmtDateTime(pickMs(t, ['first_recv_ms']))} - ${fmtDateTime(pickMs(t, ['last_recv_ms']))}`) +
+    row('本体t_ms範囲', `${flatText(pick(t, ['first_t_ms']))} - ${flatText(pick(t, ['last_t_ms']))}`) +
+    row('深度範囲(m)', `${flatText(pick(t, ['min_depth_m','depth_min_m']))} - ${flatText(pick(t, ['max_depth_m','depth_max_m']))}`) +
+    row('深度変化(mm)', pick(t, ['depth_range_mm'])) +
+    row('使用誘い', pick(t, ['used_sasoi','sasoi','sasoi_types'])) +
+    row('使用速度', pick(t, ['used_speed','speeds','speed_levels']))
+  );
+}
+function savedBlock(t){
+  return section('保存・連携情報',
+    row('保存元', pick(t, ['saved_by'])) +
+    row('作成時刻', fmtDateTime(pickMs(t, ['created_ms']))) +
+    row('更新時刻', fmtDateTime(pickMs(t, ['updated_ms']))) +
+    row('payload保存時刻', fmtDateTime(pickMs(t, ['pico_payload_saved_ms']))) +
+    row('GPS候補数', pick(t, ['gps_candidate_count'])) +
+    row('GPS visit候補数', pick(t, ['gps_visit_candidate_count'])) +
+    row('候補窓開始', fmtDateTime(pickMs(t, ['candidate_window_start_ms']))) +
+    row('候補窓終了', fmtDateTime(pickMs(t, ['candidate_window_end_ms']))) +
+    row('map_spot_id', pick(t, ['map_spot_id'])) +
+    row('map_source', pick(t, ['map_source']))
+  );
+}
+function activityRowsBlock(t){
+  const rows = arr(pick(t, ['tlog_activity_rows']));
+  const rawRows = Array.isArray(t.tlog_activity_rows) ? t.tlog_activity_rows : (t.pico_summary && Array.isArray(t.pico_summary.tlog_activity_rows) ? t.pico_summary.tlog_activity_rows : []);
+  const useRows = rawRows.slice(-80);
+  if(!useRows.length) return '<h3>実釣activity行</h3><p>保存済みactivity行はありません。</p>';
+  return `<h3>実釣activity行</h3><p>最後の${useRows.length}行を表示します。</p><div class="viewerScroll"><table class="viewerDataTable"><thead><tr><th>seq</th><th>recv</th><th>depth_mm</th><th>motor</th><th>pulse</th><th>event</th><th>speed</th><th>sasoi</th></tr></thead><tbody>${useRows.map(r => `<tr><td>${esc(r.q ?? r.seq ?? '')}</td><td>${esc(fmtDateTime(r.r || r.recv_ms || ''))}</td><td>${esc(r.d ?? r.depth_mm ?? '')}</td><td>${esc(r.m ?? r.motorRun ?? '')}</td><td>${esc(r.p ?? r.pulse ?? '')}</td><td>${esc(r.e ?? r.event ?? '')}</td><td>${esc(r.sp ?? r.speedLevel ?? '')}</td><td>${esc(r.sa ?? r.sasoiType ?? '')}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function rawBlock(t){
+  return `<details class="viewerRaw"><summary>保存済み全データ(JSON)</summary><pre>${esc(safeJson(t))}</pre></details>`;
 }
 function detailHtml(t){
-  const a = lat(t), b = lng(t);
-  return `
-    <div class="detailGrid">
-      <b>日付</b><span>${esc(fmtDateTime(tms(t)))}</span>
-      <b>湖名</b><span>${esc(displayLakeName(t))}</span>
-      <b>ポイント名</b><span>${esc(displayPointName(t))}</span>
-      <b>座標</b><span>${Number.isFinite(a) && Number.isFinite(b) ? `${a.toFixed(7)}, ${b.toFixed(7)}` : '-'}</span>
-      <b>ライン</b><span>${esc(t.line_no || t.line || '-')}</span>
-      <b>シンカー</b><span>${esc(t.sinker_g || t.sinker || '-')} g</span>
-      <b>魚探水深</b><span>${esc(t.fishfinder_depth_m || t.fishfinder_m || '-')} m</span>
-      <b>水温</b><span>${esc(t.water_temp_c || '-')} ℃</span>
-      <b>天気</b><span>${esc(t.weather || '-')}</span>
-      <b>風</b><span>${esc(t.wind || '-')}</span>
-      <b>メモ</b><span>${esc(t.memo || '-')}</span>
-    </div>
-    ${picoSummaryHtml(t)}
-  `;
+  return [summaryBlock(t), basicBlock(t), gearBlock(t), picoBlock(t), savedBlock(t), activityRowsBlock(t), rawBlock(t)].join('');
 }
-
 function ensureMap(){
   if(map) return true;
-  if(!window.L){
-    setBadge('mapBadge', '地図不可', 'bad');
-    return false;
-  }
+  if(!window.L){ setBadge('mapBadge', '地図不可', 'bad'); return false; }
   map = L.map('map', {zoomControl:true}).setView(DEFAULT_CENTER, 5);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap contributors'
-  }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'© OpenStreetMap contributors'}).addTo(map);
   markers = L.layerGroup().addTo(map);
   setTimeout(() => { try{ map.invalidateSize(); }catch(e){} }, 80);
   setTimeout(() => { try{ map.invalidateSize(); }catch(e){} }, 600);
   return true;
 }
 function drawMapForTrip(t){
-  if(!validLatLng(lat(t), lng(t))) return;
-
+  const a = lat(t), b = lng(t);
+  if(!validLatLng(a,b)) return;
   $('mapCard').classList.remove('hidden');
   ensureMap();
   if(!map || !markers) return;
-
   markers.clearLayers();
-
   const related = samePointTrips(t);
-  const a = lat(t), b = lng(t);
-
-  const icon = L.divIcon({
-    className:'',
-    html:`<div class="cluster selected">${related.length || 1}</div>`,
-    iconSize:[38,38],
-    iconAnchor:[19,19],
-    popupAnchor:[0,-18]
-  });
-
-  L.marker([a,b], {icon}).addTo(markers).bindPopup(`
-    <strong>${esc(title(t))}</strong><br>
-    ${esc(fmtDate(tms(t)))}<br>
-    この場所の過去 ${esc(related.length || 1)}回
-  `);
-
+  const icon = L.divIcon({className:'', html:`<div class="pinBubble">${related.length || 1}</div>`, iconSize:[38,38], iconAnchor:[19,19], popupAnchor:[0,-18]});
+  L.marker([a,b], {icon}).addTo(markers).bindPopup(`<strong>${esc(title(t))}</strong><br>${esc(fmtDate(pointStartMs(t)))}<br>開始 ${esc(fmtTime(pointStartMs(t)))} / 終了 ${esc(fmtTime(pointEndMs(t)))}`);
   L.circle([a,b], {radius:SAME_POINT_M, weight:3, fillOpacity:.04}).addTo(markers);
-
   map.setView([a,b], 16);
   setTimeout(() => { try{ map.invalidateSize(); map.setView([a,b], 16); }catch(e){} }, 120);
-
   setBadge('mapBadge', `同地点 ${related.length || 1}回`, 'good');
-  renderRelated(t, related);
+  renderRelated(related);
 }
-function renderRelated(base, related){
+function renderRelated(related){
   const box = $('relatedBox');
-  if(!related.length){
-    box.innerHTML = '<p>同じ場所の過去履歴はありません。</p>';
-    return;
-  }
-
-  box.innerHTML = `
-    <h3>この場所の過去釣行日</h3>
-    <p class="relatedHint">見たい日付をタップすると、その釣行回の詳細を表示します。</p>
-    <div class="relatedList">
-      ${related.map(({trip, d}) => {
-        const id = esc(String(trip.trip_id || ''));
-        const selected = String(selectedTripId || '') === String(trip.trip_id || '');
-        return `
-          <button type="button" class="relatedItem relatedButton${selected ? ' selected' : ''}" data-trip-id="${id}">
-            <strong>${esc(fmtDate(tms(trip)))}　${esc(displayLakeName(trip))}</strong>
-            <span>${esc(displayPointName(trip))} / ${Math.round(d)}m以内 / ライン ${esc(trip.line_no || '-')} / シンカー ${esc(trip.sinker_g || '-')}g</span>
-          </button>
-        `;
-      }).join('')}
-    </div>
-  `;
+  if(!related.length){ box.innerHTML = '<p>同じ場所の過去履歴はありません。</p>'; return; }
+  box.innerHTML = `<h3>この場所の過去釣行日</h3><p>見たい日付をタップすると、その釣行回の詳細を表示します。</p>${related.map(({trip, d}) => `<button class="tripItem" type="button" data-trip-id="${esc(String(trip.trip_id || ''))}"><strong>${esc(fmtDate(pointStartMs(trip)))} ${esc(displayLakeName(trip))}</strong><span>${esc(displayPointName(trip))}</span><small>開始 ${esc(fmtTime(pointStartMs(trip)))} / 終了 ${esc(fmtTime(pointEndMs(trip)))} / ${Math.round(d)}m以内</small></button>`).join('')}`;
 }
-
 function selectTrip(id){
   const t = findTrip(id);
   if(!t) return;
   selectedTripId = t.trip_id;
-
   $('detailCard').classList.remove('hidden');
-  $('detailLead').textContent = `${fmtDateTime(tms(t))}　${displayLakeName(t)} / ${displayPointName(t)}`;
+  $('detailLead').textContent = `${fmtDateTime(pointStartMs(t))} - ${fmtDateTime(pointEndMs(t))} ${displayLakeName(t)} / ${displayPointName(t)}`;
   setBadge('detailBadge', '表示中', 'good');
   $('detailBox').innerHTML = detailHtml(t);
-
   drawMapForTrip(t);
   renderList();
-
   $('detailCard').scrollIntoView({behavior:'smooth', block:'start'});
 }
-
 async function reload(){
   setBadge('dbBadge', '読込中', 'warn');
   $('statusText').textContent = '保存済みデータを読み込んでいます。';
-
   try{
     db = await openDb();
     allTrips = (await getAllTrips()).filter((t) => validLatLng(lat(t), lng(t)));
     setBadge('dbBadge', `${allTrips.length}件`, allTrips.length ? 'good' : 'warn');
-    $('statusText').textContent = allTrips.length
-      ? `保存済み過去釣行 ${allTrips.length}件を読み込みました。湖名を確認しています...`
-      : '保存済み過去釣行データがありません。';
-
-    await enrichLakeGuessesForTrips(allTrips);
-
-    $('statusText').textContent = allTrips.length
-      ? `保存済み過去釣行 ${allTrips.length}件を読み込みました。`
-      : '保存済み過去釣行データがありません。';
-
+    $('statusText').textContent = allTrips.length ? `保存済み過去釣行 ${allTrips.length}件を読み込みました。` : '保存済み過去釣行データがありません。';
     renderList();
   }catch(e){
     setBadge('dbBadge', '読込失敗', 'bad');
@@ -585,36 +347,44 @@ async function reload(){
     $('tripList').textContent = 'データ読込に失敗しました。';
   }
 }
-
 function showMapList(){
   const rows = filterTrips();
   const first = rows[0];
-  if(!first){
-    $('statusText').textContent = '表示できる釣行データがありません。';
-    return;
-  }
+  if(!first){ $('statusText').textContent = '表示できる釣行データがありません。'; return; }
   selectTrip(first.trip_id);
   $('mapCard').scrollIntoView({behavior:'smooth', block:'start'});
 }
-
 function bindEvents(){
   $('searchBox').addEventListener('input', renderList);
   $('sortMode').addEventListener('change', renderList);
   $('btnReload').addEventListener('click', reload);
   $('btnShowMapList').addEventListener('click', showMapList);
-
   document.addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-trip-id]');
     if(!btn) return;
     selectTrip(btn.getAttribute('data-trip-id'));
   });
 }
-
+function injectViewerCss(){
+  const css = `
+.viewerDataTable{width:100%;border-collapse:collapse;margin:8px 0 16px;background:#fff;border:1px solid #d6dee9;border-radius:12px;overflow:hidden}
+.viewerDataTable th,.viewerDataTable td{border:1px solid #d6dee9;padding:8px;vertical-align:top;text-align:left;word-break:break-word}
+.viewerDataTable th{width:36%;background:#eef4fb;color:#0f172a}
+.viewerRaw{margin-top:16px;background:#0f172a;color:#e5edf7;border-radius:12px;padding:12px}
+.viewerRaw summary{font-weight:900;cursor:pointer}
+.viewerRaw pre{white-space:pre-wrap;word-break:break-word;max-height:55vh;overflow:auto}
+.viewerScroll{max-height:50vh;overflow:auto;border:1px solid #d6dee9;border-radius:12px}
+`;
+  const st = document.createElement('style');
+  st.textContent = css;
+  document.head.appendChild(st);
+}
 function init(){
+  injectViewerCss();
   bindEvents();
   reload();
+  console.log(VIEWER_VERSION);
 }
-
 if(document.readyState === 'loading'){
   document.addEventListener('DOMContentLoaded', init);
 }else{

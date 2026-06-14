@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Wakasagi GPS Trip Save</title>
+<style>
+:root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0f172a;background:#f8fafc;}
+body{margin:0;padding:18px;}
+.card{max-width:560px;margin:0 auto;background:#fff;border:1px solid #dbeafe;border-radius:18px;box-shadow:0 10px 30px rgba(15,23,42,.12);padding:18px;}
+h1{font-size:24px;margin:0 0 10px;}
+.big{font-size:20px;font-weight:700;margin:12px 0;color:#0f172a;}
+.status{font-size:18px;line-height:1.45;background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:12px;margin:12px 0;}
+.small{font-size:13px;line-height:1.55;color:#475569;white-space:pre-wrap;}
+.warn{background:#fff7ed;border-color:#fed7aa;}
+.ok{background:#ecfdf5;border-color:#a7f3d0;}
+button{font-size:18px;padding:12px 16px;border-radius:12px;border:1px solid #93c5fd;background:#dbeafe;color:#0f172a;margin:6px 4px 0 0;}
+button.primary{background:#2563eb;color:#fff;border-color:#2563eb;}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>釣行履歴保存中</h1>
+  <div class="big">Mapを開かず保存します</div>
+  <div id="status" class="status">準備中</div>
+  <div id="detail" class="small">読み込み中</div>
+  <div style="margin-top:12px;">
+    <button class="primary" id="backBtn" type="button">ログページへ戻る</button>
+  </div>
+</div>
+<script>
+'use strict';
+const SAVE_VERSION = 'gps_trip_save_20260614e_ack_before_clear_min_payload';
+const DB_NAME = 'wakasagi_trip_map_v10';
+const DB_VER = 1;
+const STORE_TRIPS = 'trip_records';
+const STORE_META = 'meta';
+const $ = (id)=>document.getElementById(id);
+const statusEl = $('status');
+const detailEl = $('detail');
+const backBtn = $('backBtn');
+const qs = new URLSearchParams(location.search || '');
+const returnUrl = String(qs.get('return_url') || '');
+const sidQuery = String(qs.get('sid') || '');
+const payloadSig = String(qs.get('sig') || '');
+let db = null;
+function setStatus(text, cls){ statusEl.textContent = text; statusEl.className = 'status ' + (cls || ''); }
+function setDetail(text){ detailEl.textContent = text; }
+function s(v){ return String(v == null ? '' : v).trim(); }
+function n(v){ const x = Number(v); return Number.isFinite(x) ? x : null; }
+function firstNum(){ for(const v of arguments){ const x = n(v); if(x !== null && x > 0) return x; } return null; }
+function anyNum(){ for(const v of arguments){ const x = n(v); if(x !== null) return x; } return null; }
+function arr(v){ return Array.isArray(v) ? v : []; }
+function clonePlain(v){ try{ return JSON.parse(JSON.stringify(v == null ? null : v)); }catch(e){ return v; } }
+function genId(prefix){ return String(prefix || 'T') + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,10); }
+function decodeB64Json(b64){
+  const raw = String(b64 || '').trim();
+  if(!raw) return null;
+  let bin = '';
+  try{ bin = atob(raw); }catch(e){ return null; }
+  try{
+    if(window.TextDecoder){
+      const bytes = new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+      return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+    }
+  }catch(e){}
+  try{ return JSON.parse(decodeURIComponent(escape(bin))); }catch(e){}
+  try{ return JSON.parse(bin); }catch(e){}
+  return null;
+}
+function hashParams(){
+  const h = String(location.hash || '').replace(/^#/, '');
+  return new URLSearchParams(h);
+}
+function readPayload(){
+  const hp = hashParams();
+  const b64 = hp.get('logsync') || hp.get('payload') || qs.get('logsync') || qs.get('payload') || '';
+  return decodeB64Json(b64);
+}
+function openDb(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = ()=>{
+      const d = req.result;
+      if(!d.objectStoreNames.contains(STORE_TRIPS)){
+        const st = d.createObjectStore(STORE_TRIPS, {keyPath:'trip_id'});
+        st.createIndex('date_ms','date_ms',{unique:false});
+      }
+      if(!d.objectStoreNames.contains(STORE_META)){
+        d.createObjectStore(STORE_META, {keyPath:'key'});
+      }
+    };
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error || new Error('IndexedDB open failed'));
+  });
+}
+function getAllTrips(){
+  return new Promise((resolve)=>{
+    const tx = db.transaction(STORE_TRIPS,'readonly');
+    const r = tx.objectStore(STORE_TRIPS).getAll();
+    r.onsuccess = ()=>resolve(r.result || []);
+    r.onerror = ()=>resolve([]);
+  });
+}
+function putTrip(t){
+  return new Promise((resolve)=>{
+    const tx = db.transaction(STORE_TRIPS,'readwrite');
+    tx.objectStore(STORE_TRIPS).put(t);
+    tx.oncomplete = ()=>resolve(true);
+    tx.onerror = ()=>resolve(false);
+  });
+}
+function hasLatLng(p){
+  const lat = Number(p && (p.gps_lat || p.latest_lat || p.lat));
+  const lng = Number(p && (p.gps_lng || p.latest_lng || p.lng));
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0);
+}
+function hasBodyActivityProof(p){
+  if(!p) return false;
+  if(Number(p.motor_count || 0) > 0) return true;
+  if(Number(p.pulse_count || 0) > 0) return true;
+  if(Number(p.fishing_event_count || 0) > 0) return true;
+  const r = s(p.activity_reason || '');
+  if(/(^|,)(motorRun|pulse|event)(,|$)/.test(r)) return true;
+  return false;
+}
+function depthText(){
+  for(const v of arguments){
+    const t = s(v);
+    if(t && t !== '-' && t !== '0' && t !== '0.0') return t;
+  }
+  return '';
+}
+function mergeVisitPayload(parent, visit){
+  const p = Object.assign({}, parent || {}, visit || {});
+  p.__stage2_single_visit = true;
+  p.sid = s((parent && parent.sid) || (visit && visit.sid) || sidQuery);
+  const fallbackKeys = [
+    'lake_name','point_name','place_name','visit_label','candidate_no',
+    'trip_start_ms','trip_end_ms','point_start_ms','point_end_ms','visit_start_ms','visit_end_ms',
+    'line_no','sinker_g','sinker_g_x10','fishfinder_m','fishfinder_depth_m','water_depth_m',
+    'water_temp_c','weather_text','weather','wind_dir','wind_speed_mps','wind','pressure_hpa','note','map_source','map_spot_id',
+    'fish_count','mark_count','tlog_count','tlog_activity_row_count','tlog_activity_rows','depth_range_mm',
+    'first_seq','last_seq','first_t_ms','last_t_ms','first_recv_ms','last_recv_ms',
+    'min_depth_m','max_depth_m','used_sasoi','used_speed','gps_quality','gps_quality_label',
+    'gps_candidate_count','gps_visit_candidate_count','depth_source','depth_measured','depth_status'
+  ];
+  for(const k of fallbackKeys){
+    if(!s(p[k]) && parent && parent[k] !== undefined) p[k] = parent[k];
+  }
+  p.gps_visit_id = s(visit && (visit.gps_visit_id || visit.visit_id));
+  p.pico_point_visit_id = s((visit && visit.pico_point_visit_id) || (parent && (parent.point_visit_id || parent.map_point_key || parent.pico_point_visit_id)));
+  p.gps_lat = s((visit && (visit.gps_lat || visit.latest_lat || visit.lat)) || p.gps_lat || p.lat);
+  p.gps_lng = s((visit && (visit.gps_lng || visit.latest_lng || visit.lng)) || p.gps_lng || p.lng);
+  p.gps_acc_m = s((visit && (visit.gps_acc_m || visit.acc_m || visit.acc)) || p.gps_acc_m || p.acc);
+  p.point_visit_id = '';
+  p.map_point_key = '';
+  const depth = depthText(p.fishfinder_depth_m, p.max_depth_m, p.fishfinder_m, p.water_depth_m);
+  p.fishfinder_depth_m = depth;
+  p.water_depth_m = depth;
+  p.depth_status = depth ? 'measured' : 'not_measured';
+  return p;
+}
+function makePicoSummary(p){
+  return {
+    sid:s(p.sid),
+    gps_visit_id:s(p.gps_visit_id || p.visit_id),
+    pico_point_visit_id:s(p.pico_point_visit_id),
+    lake_name:s(p.lake_name || p.place_name),
+    point_name:s(p.point_name || p.visit_label),
+    visit_label:s(p.visit_label),
+    candidate_no:firstNum(p.candidate_no) || '',
+    trip_start_ms:firstNum(p.trip_start_ms, p.start_ms, p.first_recv_ms) || 0,
+    trip_end_ms:firstNum(p.trip_end_ms, p.last_recv_ms, p.updated_ms, p.visit_end_ms, p.end_ms) || 0,
+    point_start_ms:firstNum(p.point_start_ms, p.visit_start_ms, p.start_ms, p.first_recv_ms) || 0,
+    point_end_ms:firstNum(p.point_end_ms, p.last_recv_ms, p.visit_end_ms, p.updated_ms, p.end_ms) || 0,
+    visit_start_ms:firstNum(p.visit_start_ms) || 0,
+    visit_end_ms:firstNum(p.visit_end_ms) || 0,
+    line_no:s(p.line_no),
+    sinker_g:s(p.sinker_g),
+    fishfinder_depth_m:s(p.fishfinder_depth_m || p.water_depth_m || p.fishfinder_m || p.max_depth_m),
+    water_temp_c:s(p.water_temp_c),
+    weather:s(p.weather_text || p.weather),
+    wind:s(p.wind || p.wind_dir),
+    pressure_hpa:s(p.pressure_hpa || p.pressure || p.air_pressure_hpa),
+    fish_count:firstNum(p.fish_count) || 0,
+    mark_count:firstNum(p.mark_count) || 0,
+    tlog_count:firstNum(p.tlog_count) || 0,
+    tlog_activity_row_count:firstNum(p.tlog_activity_row_count) || arr(p.tlog_activity_rows).length || 0,
+    first_seq:anyNum(p.first_seq) ?? '',
+    last_seq:anyNum(p.last_seq) ?? '',
+    first_t_ms:anyNum(p.first_t_ms) ?? '',
+    last_t_ms:anyNum(p.last_t_ms) ?? '',
+    first_recv_ms:anyNum(p.first_recv_ms) ?? '',
+    last_recv_ms:anyNum(p.last_recv_ms) ?? '',
+    min_depth_m:s(p.min_depth_m),
+    max_depth_m:s(p.max_depth_m),
+    used_sasoi:s(p.used_sasoi),
+    used_speed:s(p.used_speed),
+    gps_quality:s(p.gps_quality),
+    gps_quality_label:s(p.gps_quality_label),
+    gps_candidate_count:firstNum(p.gps_candidate_count) || 0,
+    gps_visit_candidate_count:firstNum(p.gps_visit_candidate_count) || 0,
+    depth_range_mm:firstNum(p.depth_range_mm) || '',
+    depth_source:s(p.depth_source),
+    depth_status:s(p.depth_status),
+    saved_by:SAVE_VERSION
+  };
+}
+async function findTripForPayload(p){
+  const visitKey = s(p && (p.gps_visit_id || p.visit_id));
+  const trips = await getAllTrips();
+  if(visitKey){
+    for(const t of trips){
+      if(s(t.gps_visit_id) === visitKey) return t;
+      if(t.pico_summary && s(t.pico_summary.gps_visit_id) === visitKey) return t;
+      if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => s(l.gps_visit_id) === visitKey)) return t;
+    }
+    return null;
+  }
+  return null;
+}
+function makeTripFromPayload(p, existing){
+  const now = Date.now();
+  const lat = Number(p.gps_lat || p.latest_lat || p.lat);
+  const lng = Number(p.gps_lng || p.latest_lng || p.lng);
+  const visitKey = s(p.gps_visit_id || p.visit_id);
+  const candidateNo = firstNum(p.candidate_no, p.visit_no);
+  const visitLabel = s(p.visit_label || (candidateNo !== null ? ('P' + candidateNo) : ''));
+  const tripStartMs = firstNum(p.trip_start_ms, p.start_ms, p.first_recv_ms, p.visit_start_ms);
+  const tripEndMs = firstNum(p.trip_end_ms, p.last_recv_ms, p.updated_ms, p.visit_end_ms, p.end_ms);
+  const pointStartMs = firstNum(p.point_start_ms, p.visit_start_ms, p.start_ms, p.first_recv_ms);
+  const pointEndMs = firstNum(p.point_end_ms, p.last_recv_ms, p.visit_end_ms, p.updated_ms, p.end_ms);
+  const depth = depthText(p.fishfinder_depth_m, p.max_depth_m, p.fishfinder_m, p.water_depth_m);
+  const t = Object.assign({}, existing || {});
+  if(!t.trip_id) t.trip_id = genId('T');
+  t.pico_sid = s(p.sid || sidQuery);
+  t.gps_visit_id = visitKey;
+  t.candidate_no = candidateNo !== null ? candidateNo : (t.candidate_no || '');
+  t.visit_label = visitLabel || t.visit_label || '';
+  t.pico_point_visit_id = s(p.pico_point_visit_id || p.point_visit_id || p.map_point_key || t.pico_point_visit_id || '');
+  t.point_visit_id = '';
+  t.map_point_key = '';
+  t.map_spot_id = s(t.map_spot_id || p.map_spot_id || p.spot_id || '');
+  t.date_ms = tripStartMs || t.date_ms || now;
+  t.location_time_ms = firstNum(p.visit_start_ms, p.gps_ms, p.start_ms, t.location_time_ms, now) || now;
+  t.lat = Number.isFinite(lat) ? lat : Number(t.lat || 0);
+  t.lng = Number.isFinite(lng) ? lng : Number(t.lng || 0);
+  t.accuracy_m = firstNum(p.gps_acc_m, p.acc_m, p.acc, p.accuracy_m) || t.accuracy_m || 0;
+  if(tripStartMs) t.trip_start_ms = tripStartMs;
+  if(tripEndMs) t.trip_end_ms = tripEndMs;
+  if(pointStartMs) t.point_start_ms = pointStartMs;
+  if(pointEndMs) t.point_end_ms = pointEndMs;
+  if(firstNum(p.visit_start_ms)) t.visit_start_ms = firstNum(p.visit_start_ms);
+  if(firstNum(p.visit_end_ms)) t.visit_end_ms = firstNum(p.visit_end_ms);
+  t.lake_name = s(t.lake_name || p.lake_name || p.place_name || '');
+  t.point_name = s(t.point_name || p.point_name || visitLabel || 'Pico W実釣地点');
+  if(s(t.point_name) === 'Pico W実釣地点' && visitLabel) t.point_name = visitLabel;
+  t.line_no = s(t.line_no || p.line_no || '');
+  t.sinker_g = s(t.sinker_g || p.sinker_g || '');
+  t.fishfinder_depth_m = depth || t.fishfinder_depth_m || '';
+  t.depth_status = depth ? 'measured' : (t.depth_status || 'not_measured');
+  t.depth_last_sync_ms = now;
+  t.water_temp_c = s(t.water_temp_c || p.water_temp_c || '');
+  t.weather_text = s(t.weather_text || p.weather_text || p.weather || '');
+  t.weather = s(t.weather || p.weather || p.weather_text || '');
+  t.wind_dir = s(t.wind_dir || p.wind_dir || '');
+  t.wind_speed_mps = s(t.wind_speed_mps || p.wind_speed_mps || '');
+  t.wind = s(t.wind || p.wind || p.wind_dir || '');
+  t.pressure_hpa = s(t.pressure_hpa || p.pressure_hpa || p.pressure || p.air_pressure_hpa || '');
+  t.memo = s(t.memo || p.note || '');
+  t.fish_count = firstNum(p.fish_count) !== null ? firstNum(p.fish_count) : (t.fish_count || 0);
+  t.mark_count = firstNum(p.mark_count) !== null ? firstNum(p.mark_count) : (t.mark_count || 0);
+  t.tlog_count = firstNum(p.tlog_count) !== null ? firstNum(p.tlog_count) : (t.tlog_count || 0);
+  t.tlog_activity_row_count = firstNum(p.tlog_activity_row_count) !== null ? firstNum(p.tlog_activity_row_count) : (arr(p.tlog_activity_rows).length || t.tlog_activity_row_count || 0);
+  if(Array.isArray(p.tlog_activity_rows)) t.tlog_activity_rows = clonePlain(p.tlog_activity_rows);
+  t.first_seq = anyNum(p.first_seq) ?? t.first_seq ?? '';
+  t.last_seq = anyNum(p.last_seq) ?? t.last_seq ?? '';
+  t.first_t_ms = anyNum(p.first_t_ms) ?? t.first_t_ms ?? '';
+  t.last_t_ms = anyNum(p.last_t_ms) ?? t.last_t_ms ?? '';
+  t.first_recv_ms = anyNum(p.first_recv_ms) ?? t.first_recv_ms ?? '';
+  t.last_recv_ms = anyNum(p.last_recv_ms) ?? t.last_recv_ms ?? '';
+  t.min_depth_m = s(p.min_depth_m || t.min_depth_m || '');
+  t.max_depth_m = s(p.max_depth_m || t.max_depth_m || '');
+  t.used_sasoi = s(p.used_sasoi || t.used_sasoi || '');
+  t.used_speed = s(p.used_speed || t.used_speed || '');
+  t.gps_quality = s(p.gps_quality || t.gps_quality || '');
+  t.gps_quality_label = s(p.gps_quality_label || t.gps_quality_label || '');
+  t.gps_candidate_count = firstNum(p.gps_candidate_count) !== null ? firstNum(p.gps_candidate_count) : (t.gps_candidate_count || 0);
+  t.gps_visit_candidate_count = firstNum(p.gps_visit_candidate_count) !== null ? firstNum(p.gps_visit_candidate_count) : (t.gps_visit_candidate_count || 0);
+  t.depth_source = s(p.depth_source || t.depth_source || '');
+  t.depth_measured = s(p.depth_measured || t.depth_measured || '');
+  t.depth_range_mm = firstNum(p.depth_range_mm) !== null ? firstNum(p.depth_range_mm) : (t.depth_range_mm || '');
+  t.candidate_window_start_ms = firstNum(p.candidate_window_start_ms) !== null ? firstNum(p.candidate_window_start_ms) : (t.candidate_window_start_ms || '');
+  t.candidate_window_end_ms = firstNum(p.candidate_window_end_ms) !== null ? firstNum(p.candidate_window_end_ms) : (t.candidate_window_end_ms || '');
+  t.pico_payload = clonePlain(p);
+  t.pico_payload_saved_ms = now;
+  t.pico_logs = Array.isArray(t.pico_logs) ? t.pico_logs : [];
+  const summary = makePicoSummary(p);
+  if(Array.isArray(p.tlog_activity_rows)) summary.tlog_activity_rows = clonePlain(p.tlog_activity_rows);
+  t.pico_logs = t.pico_logs.filter(x => s(x.gps_visit_id) !== visitKey);
+  t.pico_logs.push(summary);
+  t.pico_summary = summary;
+  if(!t.created_ms) t.created_ms = now;
+  t.updated_ms = now;
+  t.saved_by = SAVE_VERSION;
+  return t;
+}
+function splitPayload(payload){
+  if(!payload) return [];
+  if(Array.isArray(payload.gps_visit_candidates)){
+    return payload.gps_visit_candidates
+      .filter(v => v && s(v.gps_visit_id || v.visit_id) && hasLatLng(v) && hasBodyActivityProof(v))
+      .map(v => mergeVisitPayload(payload, v))
+      .filter(p => hasLatLng(p) && hasBodyActivityProof(p));
+  }
+  if(hasLatLng(payload) && hasBodyActivityProof(payload)) return [payload];
+  return [];
+}
+async function savePayload(payload){
+  const parts = splitPayload(payload);
+  if(!parts.length) return {ok:false, saved_count:0, reason:'no_active_visit'};
+  let saved = 0;
+  const ids = [];
+  for(const p of parts){
+    const ex = await findTripForPayload(p);
+    const trip = makeTripFromPayload(p, ex);
+    if(await putTrip(trip)){
+      saved++;
+      ids.push(trip.trip_id);
+    }
+  }
+  return {ok:saved>0, saved_count:saved, trip_ids:ids};
+}
+function returnToLog(result){
+  const out = Object.assign({}, result || {}, {
+    ok: !!(result && result.ok),
+    saved_count: Number(result && result.saved_count || 0),
+    sig: payloadSig,
+    version: SAVE_VERSION,
+    t: Date.now()
+  });
+  if(!returnUrl){
+    setDetail(JSON.stringify(out, null, 2));
+    return;
+  }
+  const sep = returnUrl.indexOf('#') >= 0 ? '&' : '#';
+  const u = returnUrl + sep + 'gps_trip_save=' + encodeURIComponent(JSON.stringify(out));
+  setTimeout(()=>{ location.href = u; }, 450);
+}
+async function main(){
+  setStatus('保存データ確認中', 'warn');
+  setDetail('読み込み版: ' + SAVE_VERSION);
+  const payload = readPayload();
+  if(!payload){
+    const r = {ok:false, saved_count:0, reason:'payload_missing'};
+    setStatus('保存データなし', 'warn');
+    setDetail(JSON.stringify(r, null, 2));
+    returnToLog(r);
+    return;
+  }
+  db = await openDb();
+  setStatus('履歴DBへ保存中', 'warn');
+  const r = await savePayload(payload);
+  if(r.ok){
+    setStatus('保存完了: ' + r.saved_count + '地点', 'ok');
+  }else{
+    setStatus('保存なし: ' + String(r.reason || 'unknown'), 'warn');
+  }
+  setDetail(JSON.stringify(Object.assign({version:SAVE_VERSION}, r), null, 2));
+  returnToLog(r);
+}
+backBtn.addEventListener('click', ()=>{
+  if(returnUrl){ location.href = returnUrl; }
+});
+main().catch(e=>{
+  const r = {ok:false, saved_count:0, error:String(e && e.message || e)};
+  setStatus('保存エラー', 'warn');
+  setDetail(JSON.stringify(r, null, 2));
+  returnToLog(r);
+});
+</script>
+</body>
+</html>
