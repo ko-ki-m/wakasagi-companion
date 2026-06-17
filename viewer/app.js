@@ -1,6 +1,6 @@
 'use strict';
 
-const VIEWER_VERSION = 'viewer_full_20260614d';
+const VIEWER_VERSION = 'viewer_import_20260617f';
 const DB_NAME = 'wakasagi_trip_map_v10';
 const DB_VER = 1;
 const STORE_TRIPS = 'trip_records';
@@ -354,11 +354,313 @@ function showMapList(){
   selectTrip(first.trip_id);
   $('mapCard').scrollIntoView({behavior:'smooth', block:'start'});
 }
+
+function importSetStatus(text, mode){
+  const el = $('importStatus');
+  if(el) el.textContent = text;
+  setBadge('importBadge', text, mode || '');
+}
+function importS(v){ return String(v == null ? '' : v).trim(); }
+function importN(v){ const x = Number(v); return Number.isFinite(x) ? x : null; }
+function importFirstNum(){ for(const v of arguments){ const x = importN(v); if(x !== null && x > 0) return x; } return null; }
+function importAnyNum(){ for(const v of arguments){ const x = importN(v); if(x !== null) return x; } return null; }
+function importClone(v){ try{ return JSON.parse(JSON.stringify(v == null ? null : v)); }catch(e){ return v; } }
+function importGenId(prefix){ return String(prefix || 'T') + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,10); }
+function importDecodeB64Json(b64){
+  const raw = importS(b64);
+  if(!raw) return null;
+  let bin = '';
+  try{ bin = atob(raw); }catch(e){ return null; }
+  try{
+    if(window.TextDecoder){
+      const bytes = new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+      return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+    }
+  }catch(e){}
+  try{ return JSON.parse(decodeURIComponent(escape(bin))); }catch(e){}
+  try{ return JSON.parse(bin); }catch(e){}
+  return null;
+}
+function importPayloadFromText(text){
+  const raw = importS(text);
+  if(!raw) throw new Error('貼り付けデータが空です');
+  let target = raw;
+  try{
+    const u = new URL(raw);
+    const h = String(u.hash || '').replace(/^#/, '');
+    const hp = new URLSearchParams(h);
+    const q = u.searchParams;
+    target = hp.get('payload') || hp.get('logsync') || q.get('payload') || q.get('logsync') || raw;
+  }catch(e){
+    if(raw.startsWith('#')){
+      const hp = new URLSearchParams(raw.replace(/^#/, ''));
+      target = hp.get('payload') || hp.get('logsync') || raw;
+    }
+  }
+  target = importS(target);
+  try{ return JSON.parse(target); }catch(e){}
+  try{ return JSON.parse(decodeURIComponent(target)); }catch(e){}
+  const b64 = target.replace(/^payload=/,'').replace(/^logsync=/,'');
+  const decoded = importDecodeB64Json(b64);
+  if(decoded) return decoded;
+  throw new Error('JSON / Base64 / URL payload として読めません');
+}
+function importPutTrip(t){
+  return new Promise((resolve) => {
+    if(!db){ resolve(false); return; }
+    const tx = db.transaction(STORE_TRIPS, 'readwrite');
+    tx.objectStore(STORE_TRIPS).put(t);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => resolve(false);
+  });
+}
+function importHasLatLng(p){
+  const a = Number(p && (p.gps_lat || p.latest_lat || p.lat));
+  const b = Number(p && (p.gps_lng || p.latest_lng || p.lng));
+  return Number.isFinite(a) && Number.isFinite(b) && a >= -90 && a <= 90 && b >= -180 && b <= 180 && !(a === 0 && b === 0);
+}
+function importHasBodyActivityProof(p){
+  if(!p) return false;
+  if(Number(p.motor_count || 0) > 0) return true;
+  if(Number(p.pulse_count || 0) > 0) return true;
+  if(Number(p.fishing_event_count || 0) > 0) return true;
+  const r = importS(p.activity_reason || '');
+  return /(^|,)(motorRun|pulse|event)(,|$)/.test(r);
+}
+function importDepthText(){
+  for(const v of arguments){
+    const t = importS(v);
+    if(t && t !== '-' && t !== '0' && t !== '0.0') return t;
+  }
+  return '';
+}
+function importMergeVisitPayload(parent, visit){
+  const p = Object.assign({}, parent || {}, visit || {});
+  p.__viewer_import_single_visit = true;
+  p.sid = importS((parent && parent.sid) || (visit && visit.sid));
+  const fallbackKeys = [
+    'lake_name','point_name','place_name','visit_label','candidate_no',
+    'trip_start_ms','trip_end_ms','point_start_ms','point_end_ms','visit_start_ms','visit_end_ms',
+    'line_no','sinker_g','sinker_g_x10','fishfinder_m','fishfinder_depth_m','water_depth_m',
+    'water_temp_c','weather_text','weather','wind_dir','wind_speed_mps','wind','pressure_hpa','note','memo','map_source','map_spot_id',
+    'fish_count','mark_count','tlog_count','tlog_activity_row_count','tlog_activity_rows','depth_range_mm',
+    'first_seq','last_seq','first_t_ms','last_t_ms','first_recv_ms','last_recv_ms',
+    'min_depth_m','max_depth_m','used_sasoi','used_speed','gps_quality','gps_quality_label',
+    'gps_candidate_count','gps_visit_candidate_count','depth_source','depth_measured','depth_status'
+  ];
+  for(const k of fallbackKeys){
+    if(!importS(p[k]) && parent && parent[k] !== undefined) p[k] = parent[k];
+  }
+  p.gps_visit_id = importS(visit && (visit.gps_visit_id || visit.visit_id));
+  p.pico_point_visit_id = importS((visit && visit.pico_point_visit_id) || (parent && (parent.point_visit_id || parent.map_point_key || parent.pico_point_visit_id)));
+  p.gps_lat = importS((visit && (visit.gps_lat || visit.latest_lat || visit.lat)) || p.gps_lat || p.lat);
+  p.gps_lng = importS((visit && (visit.gps_lng || visit.latest_lng || visit.lng)) || p.gps_lng || p.lng);
+  p.gps_acc_m = importS((visit && (visit.gps_acc_m || visit.acc_m || visit.acc)) || p.gps_acc_m || p.acc);
+  p.point_visit_id = '';
+  p.map_point_key = '';
+  const depth = importDepthText(p.fishfinder_depth_m, p.max_depth_m, p.fishfinder_m, p.water_depth_m);
+  p.fishfinder_depth_m = depth;
+  p.water_depth_m = depth;
+  p.depth_status = depth ? 'measured' : 'not_measured';
+  return p;
+}
+function importMakePicoSummary(p){
+  return {
+    sid:importS(p.sid),
+    gps_visit_id:importS(p.gps_visit_id || p.visit_id),
+    pico_point_visit_id:importS(p.pico_point_visit_id),
+    lake_name:importS(p.lake_name || p.place_name),
+    point_name:importS(p.point_name || p.visit_label),
+    visit_label:importS(p.visit_label),
+    candidate_no:importFirstNum(p.candidate_no) || '',
+    trip_start_ms:importFirstNum(p.trip_start_ms, p.start_ms, p.first_recv_ms) || 0,
+    trip_end_ms:importFirstNum(p.trip_end_ms, p.last_recv_ms, p.updated_ms, p.visit_end_ms, p.end_ms) || 0,
+    point_start_ms:importFirstNum(p.point_start_ms, p.visit_start_ms, p.start_ms, p.first_recv_ms) || 0,
+    point_end_ms:importFirstNum(p.point_end_ms, p.last_recv_ms, p.visit_end_ms, p.updated_ms, p.end_ms) || 0,
+    visit_start_ms:importFirstNum(p.visit_start_ms) || 0,
+    visit_end_ms:importFirstNum(p.visit_end_ms) || 0,
+    line_no:importS(p.line_no),
+    sinker_g:importS(p.sinker_g),
+    fishfinder_depth_m:importS(p.fishfinder_depth_m || p.water_depth_m || p.fishfinder_m || p.max_depth_m),
+    water_temp_c:importS(p.water_temp_c),
+    weather:importS(p.weather_text || p.weather),
+    wind:importS(p.wind || p.wind_dir),
+    pressure_hpa:importS(p.pressure_hpa || p.pressure || p.air_pressure_hpa),
+    fish_count:importFirstNum(p.fish_count) || 0,
+    mark_count:importFirstNum(p.mark_count) || 0,
+    tlog_count:importFirstNum(p.tlog_count) || 0,
+    tlog_activity_row_count:importFirstNum(p.tlog_activity_row_count) || arr(p.tlog_activity_rows).length || 0,
+    first_seq:importAnyNum(p.first_seq) ?? '',
+    last_seq:importAnyNum(p.last_seq) ?? '',
+    first_t_ms:importAnyNum(p.first_t_ms) ?? '',
+    last_t_ms:importAnyNum(p.last_t_ms) ?? '',
+    first_recv_ms:importAnyNum(p.first_recv_ms) ?? '',
+    last_recv_ms:importAnyNum(p.last_recv_ms) ?? '',
+    min_depth_m:importS(p.min_depth_m),
+    max_depth_m:importS(p.max_depth_m),
+    used_sasoi:importS(p.used_sasoi),
+    used_speed:importS(p.used_speed),
+    gps_quality:importS(p.gps_quality),
+    gps_quality_label:importS(p.gps_quality_label),
+    gps_candidate_count:importFirstNum(p.gps_candidate_count) || 0,
+    gps_visit_candidate_count:importFirstNum(p.gps_visit_candidate_count) || 0,
+    depth_range_mm:importFirstNum(p.depth_range_mm) || '',
+    depth_source:importS(p.depth_source),
+    depth_status:importS(p.depth_status),
+    saved_by:VIEWER_VERSION
+  };
+}
+async function importFindTripForPayload(p){
+  const visitKey = importS(p && (p.gps_visit_id || p.visit_id));
+  if(!visitKey) return null;
+  const trips = await getAllTrips();
+  for(const t of trips){
+    if(importS(t.gps_visit_id) === visitKey) return t;
+    if(t.pico_summary && importS(t.pico_summary.gps_visit_id) === visitKey) return t;
+    if(Array.isArray(t.pico_logs) && t.pico_logs.some(l => importS(l.gps_visit_id) === visitKey)) return t;
+  }
+  return null;
+}
+function importMakeTripFromPayload(p, existing){
+  const now = Date.now();
+  const a = Number(p.gps_lat || p.latest_lat || p.lat);
+  const b = Number(p.gps_lng || p.latest_lng || p.lng);
+  const visitKey = importS(p.gps_visit_id || p.visit_id) || importGenId('GPSV');
+  const candidateNo = importFirstNum(p.candidate_no, p.visit_no);
+  const visitLabel = importS(p.visit_label || (candidateNo !== null ? ('P' + candidateNo) : ''));
+  const tripStart = importFirstNum(p.trip_start_ms, p.start_ms, p.first_recv_ms, p.visit_start_ms);
+  const tripEnd = importFirstNum(p.trip_end_ms, p.last_recv_ms, p.updated_ms, p.visit_end_ms, p.end_ms);
+  const pStart = importFirstNum(p.point_start_ms, p.visit_start_ms, p.start_ms, p.first_recv_ms);
+  const pEnd = importFirstNum(p.point_end_ms, p.last_recv_ms, p.visit_end_ms, p.updated_ms, p.end_ms);
+  const depth = importDepthText(p.fishfinder_depth_m, p.max_depth_m, p.fishfinder_m, p.water_depth_m);
+  const t = Object.assign({}, existing || {});
+  if(!t.trip_id) t.trip_id = importGenId('T');
+  t.pico_sid = importS(p.sid);
+  t.gps_visit_id = visitKey;
+  t.candidate_no = candidateNo !== null ? candidateNo : (t.candidate_no || '');
+  t.visit_label = visitLabel || t.visit_label || '';
+  t.pico_point_visit_id = importS(p.pico_point_visit_id || p.point_visit_id || p.map_point_key || t.pico_point_visit_id || '');
+  t.point_visit_id = '';
+  t.map_point_key = '';
+  t.map_spot_id = importS(t.map_spot_id || p.map_spot_id || p.spot_id || '');
+  t.date_ms = tripStart || t.date_ms || now;
+  t.location_time_ms = importFirstNum(p.visit_start_ms, p.gps_ms, p.start_ms, t.location_time_ms, now) || now;
+  t.lat = Number.isFinite(a) ? a : Number(t.lat || 0);
+  t.lng = Number.isFinite(b) ? b : Number(t.lng || 0);
+  t.accuracy_m = importFirstNum(p.gps_acc_m, p.acc_m, p.acc, p.accuracy_m) || t.accuracy_m || 0;
+  if(tripStart) t.trip_start_ms = tripStart;
+  if(tripEnd) t.trip_end_ms = tripEnd;
+  if(pStart) t.point_start_ms = pStart;
+  if(pEnd) t.point_end_ms = pEnd;
+  if(importFirstNum(p.visit_start_ms)) t.visit_start_ms = importFirstNum(p.visit_start_ms);
+  if(importFirstNum(p.visit_end_ms)) t.visit_end_ms = importFirstNum(p.visit_end_ms);
+  t.lake_name = importS(t.lake_name || p.lake_name || p.place_name || '');
+  t.point_name = importS(t.point_name || p.point_name || visitLabel || 'Pico W実釣地点');
+  if(importS(t.point_name) === 'Pico W実釣地点' && visitLabel) t.point_name = visitLabel;
+  t.line_no = importS(t.line_no || p.line_no || '');
+  t.sinker_g = importS(t.sinker_g || p.sinker_g || '');
+  t.fishfinder_depth_m = depth || t.fishfinder_depth_m || '';
+  t.depth_status = depth ? 'measured' : (t.depth_status || 'not_measured');
+  t.depth_last_sync_ms = now;
+  t.water_temp_c = importS(t.water_temp_c || p.water_temp_c || '');
+  t.weather_text = importS(t.weather_text || p.weather_text || p.weather || '');
+  t.weather = importS(t.weather || p.weather || p.weather_text || '');
+  t.wind_dir = importS(t.wind_dir || p.wind_dir || '');
+  t.wind_speed_mps = importS(t.wind_speed_mps || p.wind_speed_mps || '');
+  t.wind = importS(t.wind || p.wind || p.wind_dir || '');
+  t.pressure_hpa = importS(t.pressure_hpa || p.pressure_hpa || p.pressure || p.air_pressure_hpa || '');
+  t.memo = importS(t.memo || p.note || '');
+  t.fish_count = importFirstNum(p.fish_count) !== null ? importFirstNum(p.fish_count) : (t.fish_count || 0);
+  t.mark_count = importFirstNum(p.mark_count) !== null ? importFirstNum(p.mark_count) : (t.mark_count || 0);
+  t.tlog_count = importFirstNum(p.tlog_count) !== null ? importFirstNum(p.tlog_count) : (t.tlog_count || 0);
+  t.tlog_activity_row_count = importFirstNum(p.tlog_activity_row_count) !== null ? importFirstNum(p.tlog_activity_row_count) : (arr(p.tlog_activity_rows).length || t.tlog_activity_row_count || 0);
+  if(Array.isArray(p.tlog_activity_rows)) t.tlog_activity_rows = importClone(p.tlog_activity_rows);
+  t.first_seq = importAnyNum(p.first_seq) ?? t.first_seq ?? '';
+  t.last_seq = importAnyNum(p.last_seq) ?? t.last_seq ?? '';
+  t.first_t_ms = importAnyNum(p.first_t_ms) ?? t.first_t_ms ?? '';
+  t.last_t_ms = importAnyNum(p.last_t_ms) ?? t.last_t_ms ?? '';
+  t.first_recv_ms = importAnyNum(p.first_recv_ms) ?? t.first_recv_ms ?? '';
+  t.last_recv_ms = importAnyNum(p.last_recv_ms) ?? t.last_recv_ms ?? '';
+  t.min_depth_m = importS(p.min_depth_m || t.min_depth_m || '');
+  t.max_depth_m = importS(p.max_depth_m || t.max_depth_m || '');
+  t.used_sasoi = importS(p.used_sasoi || t.used_sasoi || '');
+  t.used_speed = importS(p.used_speed || t.used_speed || '');
+  t.gps_quality = importS(p.gps_quality || t.gps_quality || '');
+  t.gps_quality_label = importS(p.gps_quality_label || t.gps_quality_label || '');
+  t.gps_candidate_count = importFirstNum(p.gps_candidate_count) !== null ? importFirstNum(p.gps_candidate_count) : (t.gps_candidate_count || 0);
+  t.gps_visit_candidate_count = importFirstNum(p.gps_visit_candidate_count) !== null ? importFirstNum(p.gps_visit_candidate_count) : (t.gps_visit_candidate_count || 0);
+  t.depth_source = importS(p.depth_source || t.depth_source || '');
+  t.depth_measured = importS(p.depth_measured || t.depth_measured || '');
+  t.depth_range_mm = importFirstNum(p.depth_range_mm) !== null ? importFirstNum(p.depth_range_mm) : (t.depth_range_mm || '');
+  t.candidate_window_start_ms = importFirstNum(p.candidate_window_start_ms) !== null ? importFirstNum(p.candidate_window_start_ms) : (t.candidate_window_start_ms || '');
+  t.candidate_window_end_ms = importFirstNum(p.candidate_window_end_ms) !== null ? importFirstNum(p.candidate_window_end_ms) : (t.candidate_window_end_ms || '');
+  t.pico_payload = importClone(p);
+  t.pico_payload_saved_ms = now;
+  t.pico_logs = Array.isArray(t.pico_logs) ? t.pico_logs : [];
+  const summary = importMakePicoSummary(p);
+  if(Array.isArray(p.tlog_activity_rows)) summary.tlog_activity_rows = importClone(p.tlog_activity_rows);
+  t.pico_logs = t.pico_logs.filter(x => importS(x.gps_visit_id) !== visitKey);
+  t.pico_logs.push(summary);
+  t.pico_summary = summary;
+  if(!t.created_ms) t.created_ms = now;
+  t.updated_ms = now;
+  t.saved_by = VIEWER_VERSION;
+  return t;
+}
+function importSplitPayload(payload){
+  if(!payload) return [];
+  if(Array.isArray(payload)) return payload.flatMap(importSplitPayload);
+  if(Array.isArray(payload.gps_visit_candidates)){
+    return payload.gps_visit_candidates
+      .filter(v => v && importS(v.gps_visit_id || v.visit_id) && importHasLatLng(v) && importHasBodyActivityProof(v))
+      .map(v => importMergeVisitPayload(payload, v))
+      .filter(p => importHasLatLng(p) && importHasBodyActivityProof(p));
+  }
+  if(importHasLatLng(payload) && importHasBodyActivityProof(payload)) return [payload];
+  return [];
+}
+async function importSavePayload(payload){
+  const parts = importSplitPayload(payload);
+  if(!parts.length) return {ok:false, saved_count:0, reason:'実釣ありvisitがありません'};
+  let saved = 0;
+  const ids = [];
+  for(const p of parts){
+    const ex = await importFindTripForPayload(p);
+    const trip = importMakeTripFromPayload(p, ex);
+    if(await importPutTrip(trip)){
+      saved++;
+      ids.push(trip.trip_id);
+    }
+  }
+  return {ok:saved>0, saved_count:saved, trip_ids:ids};
+}
+async function importTripsFromText(){
+  try{
+    if(!db) db = await openDb();
+    const box = $('importBox');
+    const payload = importPayloadFromText(box ? box.value : '');
+    importSetStatus('保存中...', 'warn');
+    const result = await importSavePayload(payload);
+    if(result.ok){
+      importSetStatus(`保存完了: ${result.saved_count}地点`, 'good');
+      await reload();
+      if(result.trip_ids && result.trip_ids.length) selectTrip(result.trip_ids[result.trip_ids.length - 1]);
+    }else{
+      importSetStatus(`保存なし: ${result.reason || 'unknown'}`, 'bad');
+    }
+  }catch(e){
+    importSetStatus(`取り込み失敗: ${e && e.message ? e.message : e}`, 'bad');
+  }
+}
+
 function bindEvents(){
   $('searchBox').addEventListener('input', renderList);
   $('sortMode').addEventListener('change', renderList);
   $('btnReload').addEventListener('click', reload);
   $('btnShowMapList').addEventListener('click', showMapList);
+  if($('btnImportTrips')) $('btnImportTrips').addEventListener('click', importTripsFromText);
+  if($('btnImportClear')) $('btnImportClear').addEventListener('click', () => { if($('importBox')) $('importBox').value = ''; importSetStatus('待機中', ''); });
   document.addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-trip-id]');
     if(!btn) return;
@@ -374,6 +676,7 @@ function injectViewerCss(){
 .viewerRaw summary{font-weight:900;cursor:pointer}
 .viewerRaw pre{white-space:pre-wrap;word-break:break-word;max-height:55vh;overflow:auto}
 .viewerScroll{max-height:50vh;overflow:auto;border:1px solid #d6dee9;border-radius:12px}
+.importBox{width:100%;box-sizing:border-box;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px;line-height:1.45;border:1px solid #cbd5e1;border-radius:12px;padding:10px;background:#fff;min-height:170px}
 `;
   const st = document.createElement('style');
   st.textContent = css;

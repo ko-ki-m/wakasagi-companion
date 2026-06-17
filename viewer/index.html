@@ -33,6 +33,13 @@
  <div class="actions"><button id="btnReload" type="button">再読込</button><button id="btnShowMapList" type="button">地図から探す</button></div>
  <p id="statusText" class="status">保存済みデータを読み込んでいます。</p>
  </section>
+
+ <section class="card importCard">
+ <div class="cardHead"><div><h2>貼り付け取り込み</h2><p>/log からコピーしたviewer取り込み用データ、または #payload / #logsync 付きURLを貼り付けて保存します。</p></div><span id="importBadge" class="pill">待機中</span></div>
+ <textarea id="importBox" class="importBox" rows="8" placeholder="ここに /log からコピーしたJSON、Base64、または gps-trip-save.html#payload=... / #logsync=... のURLを貼り付け"></textarea>
+ <div class="actions"><button id="btnImportTrips" type="button">貼り付けデータを保存</button><button id="btnImportClear" type="button">入力を消す</button></div>
+ <p id="importStatus" class="status">貼り付けたデータを viewer の trip_records へ保存します。Mapは開きません。</p>
+ </section>
  <section class="card">
  <div class="cardHead"><div><h2>過去釣行日一覧</h2><p>見たい釣行日を選ぶと、その日の詳細と場所の地図を表示します。</p></div><span id="countBadge" class="pill">-</span></div>
  <div id="tripList" class="tripList empty">読込中...</div>
@@ -49,6 +56,6 @@
  </main>
  <footer>viewer専用入口。既存の本体連携用 index.html / app.js / style.css は使用しません。</footer>
  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
- <script src="./app.js?v=viewer-full-20260614e"></script>
+ <script src="./app.js?v=viewer-import-20260617f"></script>
 </body>
 </html>
