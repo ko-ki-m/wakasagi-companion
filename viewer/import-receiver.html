@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ワカサギ viewer 自動保存</title>
+<style>
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f5f7fb;color:#0f172a}
+main{max-width:760px;margin:24px auto;padding:18px}
+.card{background:#fff;border:1px solid #d8e1ee;border-radius:16px;padding:18px;box-shadow:0 8px 24px rgba(15,23,42,.08)}
+.badge{display:inline-block;border-radius:999px;padding:6px 10px;font-weight:800;background:#e2e8f0}.good{background:#dcfce7;color:#166534}.bad{background:#fee2e2;color:#991b1b}.warn{background:#fef3c7;color:#92400e}
+pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e5edf7;border-radius:12px;padding:12px;max-height:45vh;overflow:auto}
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>ワカサギ viewer 自動保存</h1>
+    <p><span id="badge" class="badge warn">処理中</span></p>
+    <p id="status">payloadを確認しています。</p>
+    <pre id="log"></pre>
+  </div>
+</main>
+<script>
+'use strict';
+const DB_NAME='wakasagi_trip_map_v10';
+const DB_VER=1;
+const STORE_TRIPS='trip_records';
+const MIN_REAL_MS=1600000000000;
+const $=id=>document.getElementById(id);
+function log(s){ $('log').textContent += String(s||'') + '\n'; }
+function badge(text, cls){ const b=$('badge'); b.textContent=text; b.className='badge '+(cls||''); }
+function status(text){ $('status').textContent=text; }
+function clean(v){ return String(v==null?'':v).trim(); }
+function num(v){ const n=Number(v); return Number.isFinite(n)?n:null; }
+function firstNum(){ for(const v of arguments){ const n=num(v); if(n!==null && n>0) return n; } return 0; }
+function validMs(v){ const n=firstNum(v); return n>=MIN_REAL_MS?n:0; }
+function validLatLng(a,b){ a=Number(a); b=Number(b); return Number.isFinite(a)&&Number.isFinite(b)&&a>=-90&&a<=90&&b>=-180&&b<=180&&!(a===0&&b===0); }
+function b64DecodeJson(b64){
+  const bin=atob(String(b64||''));
+  try{
+    const bytes=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+  }catch(e){
+    return JSON.parse(decodeURIComponent(escape(bin)));
+  }
+}
+function hashParams(){
+  const h=String(location.hash||'').replace(/^#/,'');
+  const p=new URLSearchParams(h);
+  return p;
+}
+function openDb(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open(DB_NAME,DB_VER);
+    req.onupgradeneeded=()=>{
+      const d=req.result;
+      if(!d.objectStoreNames.contains(STORE_TRIPS)){
+        const st=d.createObjectStore(STORE_TRIPS,{keyPath:'trip_id'});
+        st.createIndex('date_ms','date_ms',{unique:false});
+      }
+    };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error||new Error('IndexedDB open failed'));
+  });
+}
+function putTrip(db,t){
+  return new Promise(resolve=>{
+    const tx=db.transaction(STORE_TRIPS,'readwrite');
+    tx.objectStore(STORE_TRIPS).put(t);
+    tx.oncomplete=()=>resolve(true);
+    tx.onerror=()=>resolve(false);
+  });
+}
+function safeId(s){ return String(s||'').replace(/[^A-Za-z0-9_.-]+/g,'_').slice(0,96); }
+function hasActivity(v){
+  if(Number(v.motor_count||0)>0) return true;
+  if(Number(v.pulse_count||0)>0) return true;
+  if(Number(v.fishing_event_count||0)>0) return true;
+  if(Number(v.tlog_activity_row_count||0)>0) return true;
+  return /motorRun|pulse|event/.test(clean(v.activity_reason));
+}
+function makeTrip(payload,visit){
+  const now=Date.now();
+  const sid=clean(payload.sid||visit.sid);
+  const visitId=clean(visit.gps_visit_id||visit.visit_id)||('V_'+clean(visit.candidate_no||'')+'_'+clean(visit.point_start_ms||visit.visit_start_ms));
+  const pStart=validMs(visit.point_start_ms||visit.visit_start_ms||visit.first_recv_ms||payload.trip_start_ms||payload.start_ms||payload.first_recv_ms);
+  const pEnd=validMs(visit.point_end_ms||visit.visit_end_ms||visit.last_recv_ms||payload.trip_end_ms||payload.updated_ms||payload.last_recv_ms);
+  const tripStart=validMs(payload.trip_start_ms||payload.start_ms||payload.first_recv_ms)||pStart;
+  const tripEnd=validMs(payload.trip_end_ms||payload.updated_ms||payload.last_recv_ms)||pEnd;
+  const lat=Number(visit.gps_lat||visit.lat||visit.latest_lat);
+  const lng=Number(visit.gps_lng||visit.lng||visit.latest_lng);
+  const candidateNo=firstNum(visit.candidate_no,visit.visit_no)||'';
+  const label=clean(visit.visit_label)||(candidateNo?('P'+candidateNo):'Pico W実釣地点');
+  const depth=clean(visit.fishfinder_depth_m||payload.fishfinder_depth_m||payload.water_depth_m||payload.max_depth_m||'');
+  const summary={
+    sid:sid,gps_visit_id:visitId,candidate_no:candidateNo,
+    trip_start_ms:tripStart,trip_end_ms:tripEnd,point_start_ms:pStart,point_end_ms:pEnd,
+    lake_name:clean(visit.lake_name||payload.lake_name||payload.place_name),point_name:clean(visit.point_name||label),visit_label:label,
+    line_no:clean(visit.line_no||payload.line_no),sinker_g:clean(visit.sinker_g||payload.sinker_g),fishfinder_depth_m:depth,
+    water_temp_c:clean(visit.water_temp_c||payload.water_temp_c),weather:clean(visit.weather_text||visit.weather||payload.weather_text||payload.weather),
+    wind:clean(visit.wind||payload.wind),wind_dir:clean(visit.wind_dir||payload.wind_dir),wind_speed_mps:clean(visit.wind_speed_mps||payload.wind_speed_mps),
+    pressure_hpa:clean(visit.pressure_hpa||payload.pressure_hpa),
+    fish_count:firstNum(visit.fish_count,payload.fish_count)||0,mark_count:firstNum(visit.mark_count,payload.mark_count)||0,tlog_count:firstNum(visit.tlog_count,payload.tlog_count)||0,
+    tlog_activity_row_count:firstNum(visit.tlog_activity_row_count,payload.tlog_activity_row_count)||0,
+    first_seq:visit.first_seq||payload.first_seq||'',last_seq:visit.last_seq||payload.last_seq||'',
+    first_recv_ms:firstNum(visit.first_recv_ms,payload.first_recv_ms)||'',last_recv_ms:firstNum(visit.last_recv_ms,payload.last_recv_ms)||'',
+    min_depth_m:clean(visit.min_depth_m||payload.min_depth_m),max_depth_m:clean(visit.max_depth_m||payload.max_depth_m),
+    used_sasoi:clean(visit.used_sasoi||payload.used_sasoi),used_speed:clean(visit.used_speed||payload.used_speed),saved_by:'import_receiver_20260618e'
+  };
+  return {
+    trip_id:'T_'+safeId(sid)+'_'+safeId(visitId),
+    pico_sid:sid,sid:sid,gps_visit_id:visitId,candidate_no:candidateNo,visit_label:label,
+    date_ms:tripStart,location_time_ms:pStart,trip_start_ms:tripStart,trip_end_ms:tripEnd,point_start_ms:pStart,point_end_ms:pEnd,
+    lat:lat,lng:lng,accuracy_m:firstNum(visit.gps_acc_m,visit.acc_m,visit.acc)||0,
+    lake_name:summary.lake_name,point_name:summary.point_name,
+    line_no:summary.line_no,sinker_g:summary.sinker_g,fishfinder_depth_m:depth,water_depth_m:depth,depth_status:depth?'measured':'not_measured',
+    water_temp_c:summary.water_temp_c,weather_text:summary.weather,weather:summary.weather,wind:summary.wind,wind_dir:summary.wind_dir,wind_speed_mps:summary.wind_speed_mps,pressure_hpa:summary.pressure_hpa,
+    fish_count:summary.fish_count,mark_count:summary.mark_count,tlog_count:summary.tlog_count,tlog_activity_row_count:summary.tlog_activity_row_count,
+    first_seq:summary.first_seq,last_seq:summary.last_seq,first_recv_ms:summary.first_recv_ms,last_recv_ms:summary.last_recv_ms,
+    min_depth_m:summary.min_depth_m,max_depth_m:summary.max_depth_m,used_sasoi:summary.used_sasoi,used_speed:summary.used_speed,
+    pico_summary:summary,pico_payload:payload,pico_logs:[summary],pico_payload_saved_ms:now,created_ms:now,updated_ms:now,saved_by:'import_receiver_20260618e'
+  };
+}
+function validVisit(payload,v){
+  const lat=Number(v.gps_lat||v.lat||v.latest_lat);
+  const lng=Number(v.gps_lng||v.lng||v.latest_lng);
+  if(!validLatLng(lat,lng)) return false;
+  if(!hasActivity(v)) return false;
+  const s=validMs(v.point_start_ms||v.visit_start_ms||v.first_recv_ms||payload.trip_start_ms||payload.start_ms||payload.first_recv_ms);
+  const e=validMs(v.point_end_ms||v.visit_end_ms||v.last_recv_ms||payload.trip_end_ms||payload.updated_ms||payload.last_recv_ms);
+  return !!(s&&e&&e>=s);
+}
+async function run(){
+  try{
+    const hp=hashParams();
+    const raw=hp.get('p')||hp.get('payload');
+    const retB64=hp.get('r')||'';
+    const sig=clean(hp.get('sig')||'');
+    if(!raw) throw new Error('payloadがありません');
+    const payload=b64DecodeJson(decodeURIComponent(raw));
+    const visits=Array.isArray(payload.visits)?payload.visits:(Array.isArray(payload.gps_visit_candidates)?payload.gps_visit_candidates:[]);
+    const valid=visits.filter(v=>validVisit(payload,v));
+    log('受信visit: '+visits.length);
+    log('保存対象visit: '+valid.length);
+    if(!valid.length) throw new Error('保存対象visitがありません');
+    const db=await openDb();
+    let saved=0;
+    for(const v of valid){
+      const t=makeTrip(payload,v);
+      if(await putTrip(db,t)) saved++;
+    }
+    badge('保存完了','good');
+    status('保存完了: '+saved+'地点');
+    let ret='';
+    if(retB64){ try{ ret=String(b64DecodeJson(decodeURIComponent(retB64)).url||''); }catch(e){} }
+    if(ret){
+      const sep=ret.indexOf('#')>=0?'&':'#';
+      const back=ret+sep+'viewer_saved=ok&sig='+encodeURIComponent(sig)+'&n='+encodeURIComponent(String(saved));
+      log('戻ります: '+back);
+      setTimeout(()=>{ location.replace(back); },1200);
+    }
+  }catch(e){
+    badge('保存失敗','bad');
+    status('保存失敗: '+(e&&e.message?e.message:e));
+    log(e&&e.stack?e.stack:String(e));
+  }
+}
+run();
+</script>
+</body>
+</html>
