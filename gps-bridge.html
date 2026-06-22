@@ -1,241 +1,436 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>GPS取得中</title>
-  <style>
-    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f7f7f7;color:#111;}
-    main{max-width:560px;margin:0 auto;padding:22px 16px;}
-    .card{background:#fff;border-radius:14px;padding:18px;box-shadow:0 2px 10px rgba(0,0,0,.08);}
-    h1{font-size:24px;margin:0 0 12px;}
-    .lead{font-size:18px;font-weight:700;margin:10px 0;}
-    #status{font-size:20px;font-weight:700;margin:16px 0;color:#0b63c7;}
-    #detail{font-size:15px;line-height:1.55;white-space:pre-wrap;color:#333;}
-    button{font-size:18px;font-weight:700;padding:12px 16px;margin:8px 8px 0 0;border:0;border-radius:10px;background:#0b63c7;color:#fff;}
-    button.secondary{background:#555;}
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Wakasagi GPS Bridge v8</title>
+<style>
+ :root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0f172a;background:#f8fafc;}
+ body{margin:0;padding:18px;}
+ .card{max-width:560px;margin:0 auto;background:#fff;border:1px solid #dbeafe;border-radius:18px;box-shadow:0 10px 30px rgba(15,23,42,.12);padding:18px;}
+ h1{font-size:24px;margin:0 0 10px;}
+ .big{font-size:20px;font-weight:700;margin:12px 0;color:#0f172a;}
+ .status{font-size:18px;line-height:1.45;background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:12px;margin:12px 0;}
+ .small{font-size:13px;line-height:1.55;color:#475569;white-space:pre-wrap;}
+ .warn{background:#fff7ed;border-color:#fed7aa;}
+ .ok{background:#ecfdf5;border-color:#a7f3d0;}
+ button{font-size:18px;padding:12px 16px;border-radius:12px;border:1px solid #93c5fd;background:#dbeafe;color:#0f172a;margin:6px 4px 0 0;}
+ button.primary{background:#2563eb;color:#fff;border-color:#2563eb;}
+</style>
 </head>
 <body>
-<main>
-  <div class="card">
-    <h1>GPS取得中</h1>
-    <div class="lead">本体操作を最優先します</div>
-    <div id="status">準備中</div>
-    <div id="detail">この画面を前面にしたまま、スマホの現在地を取得しています。取得後は自動でPico Wのログページへ戻ります。</div>
-    <button id="retry" type="button">もう一度取得</button>
-    <button id="back" type="button" class="secondary">ログページへ戻る</button>
-  </div>
-</main>
+<div class="card">
+ <h1>GPS取得中</h1>
+ <div class="big">本体操作を最優先します</div>
+ <div id="status" class="status">準備中</div>
+ <div id="detail" class="small">読み込み中</div>
+ <div style="margin-top:12px;">
+  <button class="primary" id="retryBtn" type="button">もう一度取得</button>
+  <button id="backBtn" type="button">ログページへ戻る</button>
+ </div>
+</div>
 <script>
-(function(){
-  'use strict';
+'use strict';
 
-  const BRIDGE_VERSION = 'gps_bridge_restore_20260622a';
-  const qs = new URLSearchParams(location.search || '');
-  const pico = String(qs.get('pico') || '').trim();
-  const returnUrl = String(qs.get('return_url') || '').trim();
-  const sid = String(qs.get('sid') || '').trim();
-  const reason = String(qs.get('reason') || 'gps_bridge').trim();
-  const triggerSeq = String(qs.get('trigger_seq') || '').trim();
-  const triggerTms = String(qs.get('trigger_t_ms') || '').trim();
-  const activityGapMs = String(qs.get('activity_gap_ms') || '').trim();
-  const activityCount = String(qs.get('activity_count') || '').trim();
+const BRIDGE_VERSION = 'v8-optional-bodyguard-20260606c';
+const $ = (id)=>document.getElementById(id);
+const statusEl = $('status');
+const detailEl = $('detail');
+const retryBtn = $('retryBtn');
+const backBtn = $('backBtn');
 
-  const elStatus = document.getElementById('status');
-  const elDetail = document.getElementById('detail');
-  const btnRetry = document.getElementById('retry');
-  const btnBack = document.getElementById('back');
+const qs = new URLSearchParams(location.search || '');
+const pico = String(qs.get('pico') || '').replace(/\/+$/,'');
+const returnUrl = String(qs.get('return_url') || '');
+const sid = String(qs.get('sid') || '');
+const reason = String(qs.get('reason') || 'gps_bridge');
+const triggerSeq = Number(qs.get('trigger_seq') || 0) || 0;
+const triggerTms = Number(qs.get('trigger_t_ms') || 0) || 0;
+const activityCount = Number(qs.get('activity_count') || 0) || 0;
 
-  let running = false;
+const GUARD_INTERVAL_MS = 350;
+const GUARD_TIMEOUT_MS = 450;
+const QUIET_CHECKS_REQUIRED = 3;
+const GUARD_UNAVAILABLE_AFTER = 4;
+const GUARD_UNAVAILABLE_PROBE_MS = 1800;
+const GPS_TIMEOUT_MS = 6500;
+const GPS_HARD_TIMEOUT_MS = 9000;
+const GPS_MAXIMUM_AGE_MS = 0;
 
-  function setStatus(s, d){
-    if(elStatus) elStatus.textContent = s;
-    if(elDetail && d) elDetail.textContent = d;
+let runId = 0;
+let phase = 'idle';
+let lastGuard = null;
+let pauseCount = 0;
+let guardFailCount = 0;
+let guardUnavailable = false;
+let guardOkOnce = false;
+let monitorTimer = 0;
+
+function setStatus(text, cls){
+ statusEl.textContent = text;
+ statusEl.className = 'status ' + (cls || '');
+}
+function setDetail(text){
+ detailEl.textContent = text;
+}
+function sleep(ms){
+ return new Promise(resolve=>setTimeout(resolve, ms));
+}
+function clearMonitor(){
+ if(monitorTimer){
+  clearInterval(monitorTimer);
+  monitorTimer = 0;
+ }
+}
+function encodePayload(obj){
+ const json = JSON.stringify(obj);
+ try{
+  if(window.TextEncoder){
+   const bytes = new TextEncoder().encode(json);
+   let bin = '';
+   for(let i=0;i<bytes.length;i++) bin += String.fromCharCode(bytes[i]);
+   return btoa(bin);
   }
-
-  function safeReturnBase(){
-    if(returnUrl) return returnUrl;
-    if(pico) return pico.replace(/\/+$/,'') + '/log';
-    return '';
+ }catch(e){}
+ return btoa(unescape(encodeURIComponent(json)));
+}
+function returnToLogImmediate(payload){
+ if(!returnUrl){
+  setStatus('戻り先がありません', 'warn');
+  setDetail(JSON.stringify(payload, null, 2));
+  return;
+ }
+ const u = returnUrl + '#gpsbridge=' + encodeURIComponent(encodePayload(payload));
+ location.href = u;
+}
+function manualBack(){
+ runId++;
+ clearMonitor();
+ phase = 'manual_back';
+ setStatus('ログページへ戻ります', 'ok');
+ returnToLogImmediate({
+  ok:0,
+  source:'github_gps_bridge',
+  reason:'manual_back',
+  sid:sid,
+  trigger_seq:triggerSeq,
+  trigger_t_ms:triggerTms,
+  t_ms:Date.now(),
+  bridge_version:BRIDGE_VERSION
+ });
+}
+function bodyguardUrl(){
+ return pico + '/api/bodyguard?t=' + encodeURIComponent(String(Date.now()));
+}
+async function fetchWithTimeout(url, timeoutMs){
+ if(!window.AbortController){
+  const res = await fetch(url, {method:'GET',cache:'no-store',mode:'cors'});
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  return await res.json();
+ }
+ const ac = new AbortController();
+ const tm = setTimeout(()=>{ try{ ac.abort(); }catch(e){} }, timeoutMs);
+ try{
+  const res = await fetch(url, {method:'GET',cache:'no-store',mode:'cors',signal:ac.signal});
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  return await res.json();
+ }finally{
+  clearTimeout(tm);
+ }
+}
+async function readBodyGuard(){
+ if(!pico) return {ok:0, unavailable:1, reason:'missing_pico'};
+ try{
+  const g = await fetchWithTimeout(bodyguardUrl(), GUARD_TIMEOUT_MS);
+  guardFailCount = 0;
+  guardUnavailable = false;
+  guardOkOnce = true;
+  const out = {
+   ok:1,
+   ms:Number(g.ms || 0),
+   seq:Number(g.seq || 0),
+   pulse:Number(g.pulse || 0),
+   motor:Number(g.motor || 0),
+   req:Number(g.req || 0),
+   sasoi:Number(g.sasoi || 0),
+   input:Number(g.input || 0),
+   busy:Number(g.busy || 0),
+   activity_seq:Number(g.activity_seq || 0),
+   activity_t_ms:Number(g.activity_t_ms || 0),
+   activity_pulse:Number(g.activity_pulse || 0),
+   activity_motor:Number(g.activity_motor || 0),
+   activity_event:Number(g.activity_event || 0)
+  };
+  lastGuard = out;
+  return out;
+ }catch(e){
+  guardFailCount++;
+  if(guardFailCount >= GUARD_UNAVAILABLE_AFTER){
+   guardUnavailable = true;
   }
-
-  function buildBodyguardUrl(){
-    try{
-      if(!pico) return '';
-      return new URL('/api/bodyguard', pico).href;
-    }catch(e){
-      return '';
-    }
+  return {ok:0, unavailable:guardUnavailable?1:0, reason:String(e && e.name ? e.name : e)};
+ }
+}
+function guardIndicatesBodyActive(g){
+ if(!g || !g.ok) return false;
+ if(Number(g.busy || 0) !== 0) return true;
+ if(Number(g.motor || 0) !== 0) return true;
+ if(Number(g.req || 0) !== 0) return true;
+ if(Number(g.sasoi || 0) !== 0) return true;
+ if(Number(g.input || 0) !== 0) return true;
+ return false;
+}
+function guardChangedSince(base, g){
+ if(!base || !base.ok || !g || !g.ok) return false;
+ if(Number(g.pulse || 0) !== Number(base.pulse || 0)) return true;
+ const ba = Number(base.activity_seq || 0);
+ const ga = Number(g.activity_seq || 0);
+ if(ga > 0 && ba > 0 && ga > ba) return true;
+ if(ga > 0 && ba === 0) return true;
+ return false;
+}
+async function waitBodyQuietOptional(currentRunId, label, options){
+ const opt = options || {};
+ const allowUnavailable = opt.allowUnavailable !== false;
+ let clean = 0;
+ const started = Date.now();
+ phase = 'wait_body';
+ setStatus(label || '本体停止確認中', 'warn');
+ setDetail('本体状態を確認しています。監視できない場合でも画面に閉じ込めず処理を進めます。\n読み込み版: ' + BRIDGE_VERSION);
+ while(currentRunId === runId){
+  const g = await readBodyGuard();
+  if(currentRunId !== runId) return null;
+  if(!g.ok){
+   clean = 0;
+   if(allowUnavailable && (g.unavailable || (Date.now() - started) >= GUARD_UNAVAILABLE_PROBE_MS)){
+    setStatus('本体監視不可: 続行します', 'warn');
+    setDetail('Pico Wの本体監視APIに接続できません。Bridge画面に閉じ込めないため、GPS処理を続行します。\nreason=' + String(g.reason || '') + '\n読み込み版: ' + BRIDGE_VERSION);
+    return {ok:0, unavailable:1, reason:g.reason || 'bodyguard_unavailable'};
+   }
+   setStatus('本体応答確認中', 'warn');
+   await sleep(GUARD_INTERVAL_MS);
+   continue;
   }
-
-  async function fetchBodyguardOnce(){
-    const url = buildBodyguardUrl();
-    if(!url) return null;
-
-    const ctl = new AbortController();
-    const tid = setTimeout(function(){ try{ ctl.abort(); }catch(e){} }, 1200);
-    try{
-      const r = await fetch(url + '?t=' + encodeURIComponent(String(Date.now())), {
-        method:'GET',
-        cache:'no-store',
-        signal: ctl.signal
-      });
-      if(!r || !r.ok) return null;
-      return await r.json();
-    }catch(e){
-      return null;
-    }finally{
-      clearTimeout(tid);
-    }
+  if(guardIndicatesBodyActive(g)){
+   clean = 0;
+   setStatus('本体動作中: GPS待機', 'warn');
+   await sleep(GUARD_INTERVAL_MS);
+   continue;
   }
-
-  function isBusy(bg){
-    if(!bg) return false;
-    return Number(bg.busy || 0) !== 0 ||
-           Number(bg.motor || 0) !== 0 ||
-           Number(bg.req || 0) !== 0 ||
-           Number(bg.sasoi || 0) !== 0 ||
-           Number(bg.input || 0) !== 0;
+  clean++;
+  if(clean >= QUIET_CHECKS_REQUIRED){
+   return g;
   }
-
-  async function waitBodyQuiet(label, maxMs){
-    const start = Date.now();
-    let quietStart = 0;
-
-    while((Date.now() - start) < maxMs){
-      const bg = await fetchBodyguardOnce();
-
-      // bodyguard未実装・CORS不可・通信不可の場合はBridgeを閉じ込めない。
-      if(!bg){
-        return true;
-      }
-
-      if(isBusy(bg)){
-        quietStart = 0;
-        setStatus(label + ': 本体操作待ち', '本体操作中はGPS取得またはログページ復帰を待ちます。');
-        await new Promise(r => setTimeout(r, 700));
-        continue;
-      }
-
-      if(!quietStart) quietStart = Date.now();
-      if((Date.now() - quietStart) >= 1200) return true;
-      await new Promise(r => setTimeout(r, 300));
-    }
-
-    // 永久にBridgeへ閉じ込めない。
-    return true;
+  setStatus('本体停止確認中 ' + clean + '/' + QUIET_CHECKS_REQUIRED, 'warn');
+  await sleep(GUARD_INTERVAL_MS);
+ }
+ return null;
+}
+function getPositionOnce(){
+ return new Promise((resolve)=>{
+  if(!navigator.geolocation){
+   resolve({type:'error', code:0, message:'geolocation unavailable'});
+   return;
   }
-
-  function makePayload(extra){
-    const p = Object.assign({
-      ok: false,
-      source: 'github_gps_bridge',
-      bridge_version: BRIDGE_VERSION,
-      sid: sid,
-      reason: reason,
-      trigger_seq: triggerSeq,
-      trigger_t_ms: triggerTms,
-      activity_gap_ms: activityGapMs,
-      activity_count: activityCount,
-      t_ms: Date.now()
-    }, extra || {});
-    return p;
+  let settled = false;
+  let hardTimer = 0;
+  const finish = (v)=>{
+   if(settled) return;
+   settled = true;
+   if(hardTimer){
+    clearTimeout(hardTimer);
+    hardTimer = 0;
+   }
+   resolve(v);
+  };
+  hardTimer = setTimeout(()=>{
+   finish({type:'error', code:3, message:'gps hard timeout'});
+  }, GPS_HARD_TIMEOUT_MS);
+  try{
+   navigator.geolocation.getCurrentPosition(
+    (pos)=>finish({type:'position', pos}),
+    (err)=>finish({type:'error', code:Number(err && err.code || 0), message:String(err && err.message || err || '')}),
+    {enableHighAccuracy:true, timeout:GPS_TIMEOUT_MS, maximumAge:GPS_MAXIMUM_AGE_MS}
+   );
+  }catch(e){
+   finish({type:'error', code:0, message:String(e && e.message ? e.message : e)});
   }
-
-  function returnToLog(payload){
-    const base = safeReturnBase();
-    if(!base){
-      setStatus('ログページへ戻れません', 'return_url または pico がありません。');
-      return;
-    }
-    const raw = encodeURIComponent(JSON.stringify(payload || makePayload({ok:false,error:'empty_payload'})));
-    location.replace(base + '#gpsbridge=' + raw);
+ });
+}
+function startBodyMonitorDuringGps(currentRunId, baseGuard, onInterrupt){
+ clearMonitor();
+ monitorTimer = setInterval(async ()=>{
+  if(currentRunId !== runId || phase !== 'gps') return;
+  const g = await readBodyGuard();
+  if(currentRunId !== runId || phase !== 'gps') return;
+  if(!g.ok){
+   /*
+     監視APIが最初から使えない場合は、Bridge画面を止めない。
+     ただし、いったん監視できていた後に途切れた場合は、本体優先で中断扱いにする。
+   */
+   if(guardOkOnce && !g.unavailable){
+    onInterrupt('Pico W応答が途切れました。');
+   }
+   return;
   }
-
-  function returnError(reasonText, detailText){
-    const p = makePayload({
-      ok:false,
-      error:String(reasonText || 'gps_error'),
-      message:String(detailText || ''),
-      lat:'',
-      lng:'',
-      acc:0,
-      pos_ms:Date.now()
-    });
-    returnToLog(p);
+  if(guardIndicatesBodyActive(g)){
+   onInterrupt('本体操作・本体動作を検出しました。');
+   return;
   }
-
-  function getPositionOnce(){
-    return new Promise(function(resolve, reject){
-      if(!navigator.geolocation){
-        reject(new Error('geolocation_not_supported'));
-        return;
-      }
-      navigator.geolocation.getCurrentPosition(resolve, reject, {
-        enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 10000
-      });
-    });
+  if(guardChangedSince(baseGuard, g)){
+   onInterrupt('GPS取得中に実釣ログ変化を検出しました。');
+   return;
   }
-
-  async function run(){
-    if(running) return;
-    running = true;
-
-    try{
-      setStatus('本体状態確認中', '本体操作中ならGPS取得を待ちます。');
-      await waitBodyQuiet('GPS取得前', 20000);
-
-      setStatus('GPS取得中', 'スマホの現在地を1回だけ取得しています。');
-      const pos = await getPositionOnce();
-      const c = pos && pos.coords ? pos.coords : {};
-      const lat = Number(c.latitude);
-      const lng = Number(c.longitude);
-      const acc = Number(c.accuracy || 0);
-
-      if(!Number.isFinite(lat) || !Number.isFinite(lng)){
-        setStatus('GPS値不正', 'ログページへ戻します。');
-        returnError('invalid_position', 'lat/lng is not finite');
-        return;
-      }
-
-      setStatus('ログページ復帰待ち', '本体操作中なら/log復帰を待ちます。');
-      await waitBodyQuiet('ログ復帰前', 20000);
-
-      returnToLog(makePayload({
-        ok:true,
-        lat:lat,
-        lng:lng,
-        acc:Number.isFinite(acc) ? acc : 0,
-        pos_ms:Number(pos.timestamp || Date.now()),
-        t_ms:Date.now()
-      }));
-    }catch(e){
-      setStatus('GPS取得失敗', 'ログページへ戻します。');
-      returnError('geolocation_error', e && e.message ? e.message : String(e));
-    }finally{
-      running = false;
-    }
+ }, GUARD_INTERVAL_MS);
+}
+async function acquireGpsWithBodyPriority(currentRunId, baseGuard){
+ phase = 'gps';
+ setStatus('GPS測位中 ' + BRIDGE_VERSION, '');
+ setDetail('GPS取得中です。監視可能な場合は本体操作を検出するとGPS結果を採用せず、停止後に取り直します。\n読み込み版: ' + BRIDGE_VERSION);
+ let interrupted = null;
+ startBodyMonitorDuringGps(currentRunId, baseGuard, (label)=>{
+  if(interrupted) return;
+  interrupted = {type:'interrupt', label:label};
+  clearMonitor();
+  phase = 'interrupted';
+  pauseCount++;
+  setStatus('本体操作検出: GPS一時停止', 'warn');
+  setDetail(label + '\n進行中のGPS結果は採用せず、本体停止後に同じ要求でGPSだけ取り直します。');
+ });
+ const gpsResult = await getPositionOnce();
+ clearMonitor();
+ if(currentRunId !== runId) return {type:'cancel'};
+ if(interrupted) return interrupted;
+ if(gpsResult && gpsResult.type === 'error'){
+  if(gpsResult.code === 1){
+   phase = 'error';
+   return gpsResult;
   }
-
-  if(btnRetry){
-    btnRetry.addEventListener('click', function(ev){
-      ev.preventDefault();
-      run();
-    });
+  phase = 'gps_timeout';
+  return {type:'gps_timeout', code:gpsResult.code || 3, message:gpsResult.message || 'gps timeout'};
+ }
+ if(gpsResult && gpsResult.type === 'position'){
+  const g = await readBodyGuard();
+  if(currentRunId !== runId) return {type:'cancel'};
+  if(g && g.ok && (guardIndicatesBodyActive(g) || guardChangedSince(baseGuard, g))){
+   pauseCount++;
+   return {type:'interrupt', label:'GPS完了直後に本体側変化を検出しました。'};
   }
-
-  if(btnBack){
-    btnBack.addEventListener('click', function(ev){
-      ev.preventDefault();
-      returnError('manual_back', 'user returned without gps');
-    });
+  return {type:'position', pos:gpsResult.pos, guard:g && g.ok ? g : (lastGuard || {})};
+ }
+ return {type:'cancel'};
+}
+async function returnToLogAfterOptionalQuiet(currentRunId, payload){
+ if(!returnUrl){
+  setStatus('戻り先がありません', 'warn');
+  setDetail(JSON.stringify(payload, null, 2));
+  return;
+ }
+ await waitBodyQuietOptional(currentRunId, 'ログ復帰前の本体停止確認中', {allowUnavailable:true});
+ if(currentRunId !== runId) return;
+ setStatus('ログページへ戻ります', 'ok');
+ returnToLogImmediate(payload);
+}
+async function runGpsBridge(currentRunId){
+ while(currentRunId === runId){
+  const base = await waitBodyQuietOptional(currentRunId, 'GPS開始前の本体停止確認中', {allowUnavailable:true});
+  if(currentRunId !== runId || !base) return;
+  const r = await acquireGpsWithBodyPriority(currentRunId, base);
+  if(currentRunId !== runId) return;
+  if(r.type === 'position'){
+   phase = 'done';
+   setStatus('GPS取得完了', 'ok');
+   const c = r.pos && r.pos.coords ? r.pos.coords : {};
+   const g = r.guard || lastGuard || {};
+   await returnToLogAfterOptionalQuiet(currentRunId, {
+    ok:1,
+    source:'github_gps_bridge',
+    sid:sid,
+    reason:reason,
+    lat:Number(c.latitude),
+    lng:Number(c.longitude),
+    acc:Number(c.accuracy || 0),
+    pos_ms:Number(r.pos.timestamp || Date.now()),
+    t_ms:Date.now(),
+    trigger_seq:triggerSeq,
+    trigger_t_ms:triggerTms,
+    activity_count:activityCount,
+    pause_count:pauseCount,
+    guard_seq:g && g.ok ? Number(g.seq || 0) : 0,
+    guard_pulse:g && g.ok ? Number(g.pulse || 0) : 0,
+    guard_activity_seq:g && g.ok ? Number(g.activity_seq || 0) : 0,
+    guard_unavailable: guardUnavailable ? 1 : 0,
+    bridge_version:BRIDGE_VERSION
+   });
+   return;
   }
-
-  run();
-})();
+  if(r.type === 'gps_timeout'){
+   setStatus('GPS未確定: ログへ戻ります', 'warn');
+   await returnToLogAfterOptionalQuiet(currentRunId, {
+    ok:0,
+    source:'github_gps_bridge',
+    reason:'gps_timeout',
+    error:'gps_timeout',
+    sid:sid,
+    trigger_seq:triggerSeq,
+    trigger_t_ms:triggerTms,
+    activity_count:activityCount,
+    pause_count:pauseCount,
+    t_ms:Date.now(),
+    guard_unavailable: guardUnavailable ? 1 : 0,
+    bridge_version:BRIDGE_VERSION
+   });
+   return;
+  }
+  if(r.type === 'error' && r.code === 1){
+   setStatus('位置情報の許可がありません', 'warn');
+   setDetail('スマホ側で位置情報を許可してください。許可後に「もう一度取得」を押してください。\n読み込み版: ' + BRIDGE_VERSION);
+   return;
+  }
+  if(r.type === 'interrupt'){
+   await sleep(180);
+   continue;
+  }
+  return;
+ }
+}
+function start(){
+ runId++;
+ clearMonitor();
+ const currentRunId = runId;
+ phase = 'starting';
+ pauseCount = 0;
+ guardFailCount = 0;
+ guardUnavailable = false;
+ guardOkOnce = false;
+ setDetail('読み込み版: ' + BRIDGE_VERSION + '\nこの画面を前面にしたまま、スマホの現在地を取得しています。');
+ if(!returnUrl){
+  setStatus('return_urlがありません', 'warn');
+  setDetail('Pico Wの/logから起動してください。\n読み込み版: ' + BRIDGE_VERSION);
+  return;
+ }
+ if(!pico){
+  setStatus('picoがありません', 'warn');
+  setDetail('Pico Wの/logから起動してください。\n読み込み版: ' + BRIDGE_VERSION);
+  return;
+ }
+ runGpsBridge(currentRunId).catch((e)=>{
+  if(currentRunId !== runId) return;
+  setStatus('Bridge内部エラー', 'warn');
+  setDetail(String(e && e.stack ? e.stack : e) + '\n読み込み版: ' + BRIDGE_VERSION);
+ });
+}
+retryBtn.addEventListener('click', ()=>{
+ setStatus('再取得を開始します', '');
+ start();
+});
+backBtn.addEventListener('click', manualBack);
+window.addEventListener('pagehide', ()=>{
+ runId++;
+ clearMonitor();
+});
+start();
 </script>
 </body>
 </html>
