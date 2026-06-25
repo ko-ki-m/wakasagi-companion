@@ -1,27 +1,12 @@
-# wakasagi-companion GitHub側 上書き用 v20260513E
+wakasagi_github_fixednav_20260625a
 
-目的:
-- 追加JS方式を完全にやめる。
-- GitHub Pages root側の既存 index.html と app.js を上書きする。
-- 本体ログ連携 #logsync で届いた line_no / sinker_g / fishfinder_depth_m / water_temp_c / weather / wind を trip_records トップ階層へ保存する。
-- root側マップ、全履歴、選択詳細に反映する。
+Upload these files to the GitHub repository root:
+- index.html
+- wakasagi_pico_fixed_nav_20260625a.js
+- service-worker.js
 
-アップロード場所:
-- wakasagi-companion/index.html
-- wakasagi-companion/app.js
-
-削除対象:
-- mapsync_topfields_fix_20260513.js
-- mapsync_topfields_fix_20260513b.js
-- mapsync_topfields_fix_20260513C.js
-- mapsync_topfields_fix_20260513D.js
-- その他 mapsync_topfields_fix_20260513*.js
-
-触らない:
-- lake_autofill.js
-- viewer/index.html
-- viewer/app.js
-
-注意:
-- このZIPはGitHub側だけです。
-- Pico W側 .ino では、別途 tlog2StatsBySidForMapSync() と buildMapSyncPayload() の修正が必要です。
+Purpose:
+- Current index.html shows fixed buttons fixedPicoLog/fixedPicoRemote.
+- Current loaded scripts do not bind those fixed buttons.
+- This patch adds a small dedicated script that binds LOGへ戻る and 操作パネルへ to the Pico host.
+- It does not modify app_stage1/app_stage2/lake_autofill/gps-bridge/gps-recorder.
