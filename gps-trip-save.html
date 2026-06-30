@@ -31,7 +31,7 @@ button.primary{background:#2563eb;color:#fff;border-color:#2563eb;}
 </div>
 <script>
 'use strict';
-const SAVE_VERSION = 'gps_trip_save_20260630a_pico_result_callback';
+const SAVE_VERSION = 'gps_trip_save_20260614e_ack_before_clear_min_payload';
 const DB_NAME = 'wakasagi_trip_map_v10';
 const DB_VER = 1;
 const STORE_TRIPS = 'trip_records';
@@ -44,8 +44,7 @@ const qs = new URLSearchParams(location.search || '');
 const returnUrl = String(qs.get('return_url') || '');
 const sidQuery = String(qs.get('sid') || '');
 const payloadSig = String(qs.get('sig') || '');
-const picoBase = String(qs.get('pico') || '').replace(/\/+$/,'');
-const tripRequestId = String(qs.get('trip_request_id') || qs.get('id') || '0');
+const tripRequestId = String(qs.get('trip_request_id') || qs.get('request_id') || '0');
 let db = null;
 function setStatus(text, cls){ statusEl.textContent = text; statusEl.className = 'status ' + (cls || ''); }
 function setDetail(text){ detailEl.textContent = text; }
@@ -336,34 +335,15 @@ async function savePayload(payload){
   }
   return {ok:saved>0, saved_count:saved, trip_ids:ids};
 }
-async function notifyPicoResult(result){
-  if(!picoBase || !tripRequestId || tripRequestId === '0') return false;
-
-  const ok = !!(result && result.ok);
-  const reason = String((result && (result.reason || result.error)) || '');
-  const url = picoBase + '/api/trip/result?id=' + encodeURIComponent(tripRequestId) +
-    '&ok=' + encodeURIComponent(ok ? '1' : '0') +
-    '&saved_count=' + encodeURIComponent(String(Number(result && result.saved_count || 0))) +
-    '&reason=' + encodeURIComponent(reason) +
-    '&t=' + encodeURIComponent(String(Date.now()));
-
-  try{
-    const res = await fetch(url, {cache:'no-store', mode:'cors'});
-    return !!(res && res.ok);
-  }catch(e){
-    return false;
-  }
-}
-
-async function returnToLog(result){
-  const picoNotified = await notifyPicoResult(result);
+function returnToLog(result){
   const out = Object.assign({}, result || {}, {
     ok: !!(result && result.ok),
     saved_count: Number(result && result.saved_count || 0),
     sig: payloadSig,
-    version: SAVE_VERSION,
-    pico_notified: picoNotified,
     trip_request_id: tripRequestId,
+    request_id: tripRequestId,
+    sid: sidQuery,
+    version: SAVE_VERSION,
     t: Date.now()
   });
   if(!returnUrl){
@@ -382,7 +362,7 @@ async function main(){
     const r = {ok:false, saved_count:0, reason:'payload_missing'};
     setStatus('保存データなし', 'warn');
     setDetail(JSON.stringify(r, null, 2));
-    await returnToLog(r);
+    returnToLog(r);
     return;
   }
   db = await openDb();
@@ -394,16 +374,16 @@ async function main(){
     setStatus('保存なし: ' + String(r.reason || 'unknown'), 'warn');
   }
   setDetail(JSON.stringify(Object.assign({version:SAVE_VERSION}, r), null, 2));
-  await returnToLog(r);
+  returnToLog(r);
 }
 backBtn.addEventListener('click', ()=>{
   if(returnUrl){ location.href = returnUrl; }
 });
-main().catch(async e=>{
+main().catch(e=>{
   const r = {ok:false, saved_count:0, error:String(e && e.message || e)};
   setStatus('保存エラー', 'warn');
   setDetail(JSON.stringify(r, null, 2));
-  await returnToLog(r);
+  returnToLog(r);
 });
 </script>
 </body>
