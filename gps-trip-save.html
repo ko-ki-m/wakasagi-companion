@@ -44,7 +44,6 @@ const qs = new URLSearchParams(location.search || '');
 const returnUrl = String(qs.get('return_url') || '');
 const sidQuery = String(qs.get('sid') || '');
 const payloadSig = String(qs.get('sig') || '');
-const tripRequestId = String(qs.get('trip_request_id') || qs.get('request_id') || '0');
 let db = null;
 function setStatus(text, cls){ statusEl.textContent = text; statusEl.className = 'status ' + (cls || ''); }
 function setDetail(text){ detailEl.textContent = text; }
@@ -340,9 +339,6 @@ function returnToLog(result){
     ok: !!(result && result.ok),
     saved_count: Number(result && result.saved_count || 0),
     sig: payloadSig,
-    trip_request_id: tripRequestId,
-    request_id: tripRequestId,
-    sid: sidQuery,
     version: SAVE_VERSION,
     t: Date.now()
   });
